@@ -15,6 +15,7 @@ const Position = struct {
 const block_width = 32;
 const screen_width = 384;
 const screen_height = 704;
+const block_num = (screen_width * screen_height) / (block_width * block_width);
 
 pub fn main() !void {
     if (c.SDL_Init(c.SDL_INIT_VIDEO) != 0) {
@@ -42,6 +43,7 @@ pub fn main() !void {
 
     var prevTime: u32 = 0;
     var secondsCount: u32 = 0;
+    var placementTime: u32 = 0;
 
     var quit = false;
     while (!quit) {
@@ -56,6 +58,15 @@ pub fn main() !void {
             secondsCount = 0;
 
             move_down(&pos);
+        }
+
+        if (placement_available(&pos)) {
+            placementTime += elapsedTime;
+        }
+
+        if (placementTime > 3) {
+            place_block(&pos);
+            placementTime = 0;
         }
 
         prevTime = currTime;
@@ -96,20 +107,34 @@ pub fn main() !void {
             }
         }
 
-        // print("tick: {}\n", .{elapsedTime});
+        render_background(renderer);
 
-        _ = c.SDL_SetRenderDrawColor(renderer, 96, 128, 255, 255);
-        _ = c.SDL_RenderClear(renderer);
-
-        _ = c.SDL_SetRenderDrawColor(renderer, 0, 0xff, 0, 0xff);
-        const rect = c.SDL_Rect{ .x = pos.x, .y = pos.y, .w = block_width, .h = block_width };
-
-        _ = c.SDL_RenderFillRect(renderer, &rect);
-
-        c.SDL_RenderPresent(renderer);
+        render_block(renderer, &pos);
 
         c.SDL_Delay(17);
     }
+}
+
+pub fn render_background(renderer: *c.SDL_Renderer) void {
+    _ = c.SDL_SetRenderDrawColor(renderer, 96, 128, 255, 255);
+    _ = c.SDL_RenderClear(renderer);
+}
+
+pub fn render_block(renderer: *c.SDL_Renderer, pos: *Position) void {
+    _ = c.SDL_SetRenderDrawColor(renderer, 0, 0xff, 0, 0xff);
+    const rect = c.SDL_Rect{ .x = pos.x, .y = pos.y, .w = block_width, .h = block_width };
+
+    _ = c.SDL_RenderFillRect(renderer, &rect);
+
+    c.SDL_RenderPresent(renderer);
+}
+
+pub fn place_block(pos: *Position) void {
+    print("place {},{}", .{ pos.x, pos.y });
+}
+
+pub fn placement_available(pos: *Position) bool {
+    return (pos.y >= (screen_height - 2 * block_width));
 }
 
 pub fn move_left(pos: *Position) void {
