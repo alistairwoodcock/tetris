@@ -12,11 +12,6 @@ const Position = struct {
     y: c_int,
 };
 
-var pos = Position{
-    .x = 0,
-    .y = 0,
-};
-
 const block_width = 32;
 const screen_width = 384;
 const screen_height = 704;
@@ -40,6 +35,11 @@ pub fn main() !void {
     };
     defer c.SDL_DestroyRenderer(renderer);
 
+    var pos = Position{
+        .x = 0,
+        .y = 0,
+    };
+
     var prevTime: u32 = 0;
     var secondsCount: u32 = 0;
 
@@ -55,7 +55,7 @@ pub fn main() !void {
             print("tick. {}\n", .{secondsCount});
             secondsCount = 0;
 
-            // move_block_down(&pos);
+            move_down(&pos);
         }
 
         prevTime = currTime;
@@ -71,16 +71,14 @@ pub fn main() !void {
                 c.SDL_KEYDOWN => {
                     switch (event.key.keysym.sym) {
                         c.SDLK_LEFT => {
-                            if (pos.x > 0) pos.x -= block_width;
+                            move_left(&pos);
                         },
                         c.SDLK_RIGHT => {
-                            if (pos.x <= (screen_width - 2 * block_width)) pos.x += block_width;
+                            move_right(&pos);
                         },
-                        c.SDLK_UP => {
-                            // pos.y -= block_width;
-                        },
+                        c.SDLK_UP => {},
                         c.SDLK_DOWN => {
-                            if (pos.y <= (screen_height - 2 * block_width)) pos.y += block_width;
+                            move_down(&pos);
                         },
                         114 => { // r
                             pos.x = 0;
@@ -112,4 +110,16 @@ pub fn main() !void {
 
         c.SDL_Delay(17);
     }
+}
+
+pub fn move_left(pos: *Position) void {
+    if (pos.x > 0) pos.x -= block_width;
+}
+
+pub fn move_right(pos: *Position) void {
+    if (pos.x <= (screen_width - 2 * block_width)) pos.x += block_width;
+}
+
+pub fn move_down(pos: *Position) void {
+    if (pos.y <= (screen_height - 2 * block_width)) pos.y += block_width;
 }
