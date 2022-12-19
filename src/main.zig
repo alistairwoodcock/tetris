@@ -6,6 +6,7 @@ const c = @cImport({
 });
 const std = @import("std");
 const print = std.debug.print;
+const expect = std.testing.expect;
 
 const Position = struct {
     x: c_int,
@@ -13,6 +14,7 @@ const Position = struct {
 };
 
 const Tetromino = struct {
+    blocks: *[4]Block,
     pos: Position,
     rotationIndex: u32, // index into the rotation dim-2
     rotationOffset: u32, // offset from the rotation index 0 - 3
@@ -97,11 +99,13 @@ const block_width = 32;
 const screen_width = 384;
 const screen_height = 704;
 const boundary_width = (screen_width - 2 * block_width);
+const boundary_width_blocks = boundary_width / block_width;
 const boundary_height = (screen_height - 2 * block_width);
+const boundary_height_blocks = boundary_height / block_width;
 const block_num = (screen_width * screen_height) / (block_width * block_width);
 
 var placed_blocks_count = 0;
-//const blocks: []Block = .{} * block_num;
+
 
 pub fn main() !void {
     if (c.SDL_Init(c.SDL_INIT_VIDEO) != 0) {
@@ -122,14 +126,21 @@ pub fn main() !void {
     };
     defer c.SDL_DestroyRenderer(renderer);
 
+    const allocator: std.mem.Allocator = std.heap.page_allocator; // this is not the best choice of allocator, see below.
+    const blocks: []Block = try allocator.alloc(Block, block_num);
+    defer allocator.free(blocks);
+
     var tet = Tetromino{
         .pos = .{
             .x = 0,
             .y = 0,
         },
+        .blocks = blocks[0..4],
         .rotationIndex = 8,
         .rotationOffset = 0,
     };
+
+    reset_tetromino(&tet);
 
     var prevTime: u32 = 0;
     var secondsCount: u32 = 0;
@@ -147,6 +158,9 @@ pub fn main() !void {
 
         if (secondsCount >= 1000) {
             print("tick. {}\n", .{secondsCount});
+
+            print("place {},{}, min_x = {}", .{ tet.pos.x, tet.pos.y, get_min_x(&tet) });
+
             secondsCount = 0;
 
             move_down(&tet);
@@ -156,7 +170,7 @@ pub fn main() !void {
             move_down(&tet);
         }
 
-        if (placement_available(&tet.pos)) {
+        if (placement_available(&tet)) {
             fastMoveDown = false;
             placementTime += elapsedTime;
         }
@@ -224,7 +238,7 @@ pub fn main() !void {
 
         render_background(renderer);
 
-        render_block(renderer, &tet);
+        render_tetromino(renderer, &tet);
 
         c.SDL_Delay(17);
     }
@@ -235,15 +249,13 @@ pub fn render_background(renderer: *c.SDL_Renderer) void {
     _ = c.SDL_RenderClear(renderer);
 }
 
-pub fn render_block(renderer: *c.SDL_Renderer, tet: *Tetromino) void {
-    const rotatinOffset = get_rotation(tet);
+pub fn render_tetromino(renderer: *c.SDL_Renderer, tet: *Tetromino) void {
 
-    for (rotatinOffset) |offset| {
+    for (tet.blocks) |block| {
         _ = c.SDL_SetRenderDrawColor(renderer, 0, 0xff, 0, 0xff);
 
-        const x = (offset.x * 32) + tet.pos.x;
-        const y = (offset.y * 32) + tet.pos.y;
-
+        const x = (block.pos.x + tet.pos.x) * block_width;
+        const y = (block.pos.y + tet.pos.y) * block_width;
         const rect = c.SDL_Rect{ .x = x, .y = y, .w = block_width, .h = block_width };
 
         _ = c.SDL_RenderFillRect(renderer, &rect);
@@ -264,37 +276,28 @@ pub fn get_rotation_offset_max_x(tet: *Tetromino) c_int {
     return maxx;
 }
 
-pub fn get_rotation_offset_min_x(tet: *Tetromino) c_int {
-    const rotatinOffset = get_rotation(tet);
-
-    var minx = rotatinOffset[0].x;
-
-    for (rotatinOffset) |offset| {
-        if (offset.x < minx) minx = offset.x;
-    }
-
-    return minx;
-}
-
 pub fn get_min_x(tet: *Tetromino) c_int {
-    return tet.pos.x + (get_rotation_offset_min_x(tet) * block_width);
+    var min_x = tet.blocks[0].pos.x;
+    for (tet.blocks) |block| {
+        if (block.pos.x < min_x) min_x = block.pos.x;
+    }
+    return min_x + tet.pos.x;
 }
 
 pub fn get_max_x(tet: *Tetromino) c_int {
-    return tet.pos.x + (get_rotation_offset_max_x(tet) * block_width);
+    var max_x = tet.blocks[0].pos.x;
+    for (tet.blocks) |block| {
+        if (block.pos.x > max_x) max_x = block.pos.x;
+    }
+    return max_x + tet.pos.x;
 }
 
 pub fn get_min_y(tet: *Tetromino) c_int {
-    const rotatinOffset = get_rotation(tet);
-
-    var miny = rotatinOffset[0].y * 32 + tet.pos.y;
-
-    for (rotatinOffset) |offset| {
-        const y = (offset.y * 32) + tet.pos.y;
-        if (y < miny) miny = y;
+    var min_y = tet.blocks[0].y;
+    for (tet.blocks) |block| {
+        if (block.y < min_y) min_y = block.y;
     }
-
-    return miny;
+    return min_y + tet.pos.y;
 }
 
 pub fn get_rotation_offset_max_y(tet: *Tetromino) c_int {
@@ -310,7 +313,11 @@ pub fn get_rotation_offset_max_y(tet: *Tetromino) c_int {
 }
 
 pub fn get_max_y(tet: *Tetromino) c_int {
-    return tet.pos.y + get_rotation_offset_max_y(tet) * block_width;
+    var max_y = tet.blocks[0].pos.y;
+    for (tet.blocks) |block| {
+        if (max_y < block.pos.y) max_y = block.pos.y;
+    }
+    return max_y + tet.pos.y;
 }
 
 pub fn get_rotation(tet: *Tetromino) *const [4]Position {
@@ -320,16 +327,13 @@ pub fn get_rotation(tet: *Tetromino) *const [4]Position {
 pub fn rotate(tet: *Tetromino) void {
     tet.rotationOffset += 1;
     if (tet.rotationOffset >= 4) tet.rotationOffset = 0;
+    set_blocks_to_rotation(tet);
 }
 
 pub fn bounds_bounce_tetromino(tet: *Tetromino) void {
-    if (get_min_x(tet) < block_width) {
-        var abs_left_width = get_rotation_offset_min_x(tet) * block_width;
-        if (abs_left_width < 0) abs_left_width *= -1;
-        tet.pos.x = block_width + abs_left_width;
-    }
-    if (get_max_x(tet) > boundary_width) tet.pos.x = boundary_width - (get_rotation_offset_max_x(tet) * block_width);
-    if (get_max_y(tet) > boundary_height) tet.pos.y = boundary_height - (get_rotation_offset_max_y(tet) * block_width);
+    if (get_min_x(tet) <= 1) tet.pos.x = 2;
+    if (get_max_x(tet) > boundary_width_blocks) tet.pos.x = boundary_width_blocks - 1;
+    if (get_max_y(tet) > boundary_height_blocks) tet.pos.y = boundary_height_blocks - 1;
 }
 
 pub fn place_tetromino(tet: *Tetromino) void {
@@ -337,23 +341,45 @@ pub fn place_tetromino(tet: *Tetromino) void {
     // block
 }
 
-pub fn placement_available(pos: *Position) bool {
-    return (pos.y >= (screen_height - 2 * block_width));
+pub fn placement_available(tet: *Tetromino) bool {
+    const max_y = get_max_y(tet);
+    return (max_y >= boundary_height_blocks);
 }
 
 pub fn move_left(tet: *Tetromino) void {
-    if (get_min_x(tet) > block_width) tet.pos.x -= block_width;
+    if (get_min_x(tet) > 1) tet.pos.x -= 1;
 }
 
 pub fn move_right(tet: *Tetromino) void {
-    if (get_max_x(tet) < boundary_width) tet.pos.x += block_width;
+    if (get_max_x(tet) < boundary_width_blocks) tet.pos.x += 1;
 }
 
 pub fn move_down(tet: *Tetromino) void {
-    if (get_max_y(tet) < boundary_height) tet.pos.y += block_width;
+    if (get_max_y(tet) < boundary_height_blocks) tet.pos.y += 1;
 }
 
 pub fn reset_tetromino(tet: *Tetromino) void {
-    tet.pos.x = 0;
+
+    tet.pos.x = boundary_width_blocks / 2;
     tet.pos.y = 0;
+
+    set_blocks_to_rotation(tet);
+}
+
+pub fn set_blocks_to_rotation(tet: *Tetromino) void {
+
+    const rotation = get_rotation(tet);
+
+    tet.blocks[0].pos.x = rotation[0].x;
+    tet.blocks[0].pos.y = rotation[0].y;
+
+    tet.blocks[1].pos.x = rotation[1].x;
+    tet.blocks[1].pos.y = rotation[1].y;
+
+    tet.blocks[2].pos.x = rotation[2].x;
+    tet.blocks[2].pos.y = rotation[2].y;
+
+    tet.blocks[3].pos.x = rotation[3].x;
+    tet.blocks[3].pos.y = rotation[3].y;
+
 }
