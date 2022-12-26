@@ -8,6 +8,18 @@ const std = @import("std");
 const print = std.debug.print;
 const expect = std.testing.expect;
 
+const State = struct {
+    global: *Coordinates,
+    field: *Coordinates,
+    blocks: []Block,
+    tet: *Tetromino,
+};
+
+const Coordinates = struct {
+    parent: ?*Coordinates,
+    pos: Position,
+};
+
 const Position = struct {
     x: c_int,
     y: c_int,
@@ -15,8 +27,8 @@ const Position = struct {
 
 const Tetromino = struct {
     block_offset: u32,
-    blocks: *[4]Block,
-    pos: Position,
+    blocks: []Block,
+    coords: Coordinates,
     rotation_index: u32, // index into the rotation dim-2
     rotation_offset: u32, // offset from the rotation index 0 - 3
 };
@@ -30,9 +42,7 @@ const Colour = struct {
 const Block = struct {
     placed: bool,
     visible: bool,
-    tetromino: ?*Tetromino,
-    pos: Position, // Relative position compared to the parent tetromino if present
-//    abs_pos: Position, // Absolute position in the world
+    coords: Coordinates,
     colour: Colour,
 };
 
@@ -101,18 +111,22 @@ const rotations = [_][4]Position{
 };
 
 const block_width = 32;
-const screen_width = 384;
-const screen_height = 704;
-const boundary_width = (screen_width - 2 * block_width);
+const screen_width = 384 + 256;
+const screen_height = 704 + 128;
+const boundary_width = (384 - 2 * block_width);
 const boundary_width_blocks = boundary_width / block_width;
-const boundary_height = (screen_height - 2 * block_width);
+const boundary_height = (704 - 2 * block_width);
 const boundary_height_blocks = boundary_height / block_width;
 const block_num = (screen_width * screen_height) / (block_width * block_width);
 
+
+
 var placed_blocks_count = 0;
 
-
 pub fn main() !void {
+
+    print("{}", .{block_num});
+
     if (c.SDL_Init(c.SDL_INIT_VIDEO) != 0) {
         c.SDL_Log("Unable to initialize SDL: %s", c.SDL_GetError());
         return error.SDLInitializationFailed;
@@ -131,14 +145,28 @@ pub fn main() !void {
     };
     defer c.SDL_DestroyRenderer(renderer);
 
-    const allocator: std.mem.Allocator = std.heap.page_allocator; // this is not the best choice of allocator, see below.
+    const allocator: std.mem.Allocator = std.heap.page_allocator;
+
+    const global = try allocator.create(Coordinates);
+    global.parent = null;
+    global.pos.x = 0;
+    global.pos.y = 0;
+
+    const field = try allocator.create(Coordinates);
+    field.parent = global;
+    field.pos.x = 1;
+    field.pos.y = 4;
+
     const blocks: []Block = try allocator.alloc(Block, block_num);
     defer allocator.free(blocks);
 
     var tet = Tetromino{
-        .pos = .{
-            .x = 0,
-            .y = 0,
+        .coords = .{
+            .parent = field,
+            .pos = .{
+                .x = boundary_width_blocks / 2,
+                .y = 0,
+            },
         },
         .block_offset = 0,
         .blocks = blocks[0..4],
@@ -146,13 +174,13 @@ pub fn main() !void {
         .rotation_offset = 0,
     };
 
-    reset_tetromino(&tet);
+    init_tetromino(&tet);
 
     var prev_time: u32 = 0;
     var seconds_count: u32 = 0;
     var placement_time: u32 = 0;
 
-    var fast_move_down: bool = false;
+//    var fast_move_down: bool = false;
 
     var quit = false;
     while (!quit) {
@@ -165,19 +193,17 @@ pub fn main() !void {
         if (seconds_count >= 1000) {
             print("tick. {}\n", .{seconds_count});
 
-            print("place {},{}, min_x = {}", .{ tet.pos.x, tet.pos.y, get_min_x(&tet) });
-
             seconds_count = 0;
 
-            move_down(&tet);
+//            move_down(&tet);
         }
 
-        if (fast_move_down) {
-            move_down(&tet);
-        }
+//        if (fast_move_down) {
+//            move_down(&tet);
+//        }
 
         if (placement_available(&tet)) {
-            fast_move_down = false;
+//            fast_move_down = false;
             placement_time += elapsed_time;
         }
 
@@ -212,11 +238,11 @@ pub fn main() !void {
                             move_down(&tet);
                         },
                         32 => {
-                            print("fast move down enabled", .{});
-                            fast_move_down = true;
+//                            print("fast move down enabled", .{});
+//                            fast_move_down = true;
                         },
                         114 => { // r
-                            reset_tetromino(&tet);
+                            init_tetromino(&tet);
                         },
                         44 => {
                             if (tet.rotation_index == 0) tet.rotation_index = rotations.len;
@@ -244,9 +270,11 @@ pub fn main() !void {
 
         render_background(renderer);
 
-        render_tetromino(renderer, &tet);
+        render_field(renderer, field);
 
         render_blocks(renderer, blocks);
+
+        c.SDL_RenderPresent(renderer);
 
         c.SDL_Delay(17);
     }
@@ -257,19 +285,18 @@ pub fn render_background(renderer: *c.SDL_Renderer) void {
     _ = c.SDL_RenderClear(renderer);
 }
 
-pub fn render_tetromino(renderer: *c.SDL_Renderer, tet: *Tetromino) void {
+pub fn render_field(renderer: *c.SDL_Renderer, field: *Coordinates) void {
 
-    for (tet.blocks) |block| {
-        _ = c.SDL_SetRenderDrawColor(renderer, 0, 0xff, 0, 0xff);
+    _ = c.SDL_SetRenderDrawColor(renderer, 0xef, 0xef, 0xef, 0xff);
 
-        const x = (block.pos.x + tet.pos.x) * block_width;
-        const y = (block.pos.y + tet.pos.y) * block_width;
-        const rect = c.SDL_Rect{ .x = x, .y = y, .w = block_width, .h = block_width };
+    const pos = get_absolute_position(field.*);
+    const x = pos.x * block_width;
+    const y = pos.y * block_width;
 
-        _ = c.SDL_RenderFillRect(renderer, &rect);
-    }
+    const rect = c.SDL_Rect{ .x = x, .y = y, .w = boundary_width, .h = boundary_height };
 
-    c.SDL_RenderPresent(renderer);
+    _ = c.SDL_RenderFillRect(renderer, &rect);
+
 }
 
 pub fn render_blocks(renderer: *c.SDL_Renderer, blocks: []Block) void {
@@ -277,80 +304,50 @@ pub fn render_blocks(renderer: *c.SDL_Renderer, blocks: []Block) void {
     var draw = false;
 
     for (blocks) |block| {
-        if (!block.placed and !block.visible) continue;
+        if (!block.visible) continue;
 
         draw = true;
 
-        _ = c.SDL_SetRenderDrawColor(renderer, 0, 0xff, 0, 0xff);
+        _ = c.SDL_SetRenderDrawColor(renderer, 0, block.colour.r, block.colour.g, block.colour.b);
 
-        const x = block.pos.x * block_width;
-        const y = block.pos.y * block_width;
+        const pos = get_absolute_position(block.coords);
+        const x = pos.x * block_width;
+        const y = pos.y * block_width;
+
         const rect = c.SDL_Rect{ .x = x, .y = y, .w = block_width, .h = block_width };
 
         _ = c.SDL_RenderFillRect(renderer, &rect);
     }
 
-    if (draw) c.SDL_RenderPresent(renderer);
-
 
 }
 
-pub fn get_rotation_offset_max_x(tet: *Tetromino) c_int {
-    const rotatinOffset = get_rotation(tet);
-
-    var maxx = rotatinOffset[0].x;
-
-    for (rotatinOffset) |offset| {
-        if (offset.x > maxx) maxx = offset.x;
+pub fn get_absolute_position(coords: Coordinates) Position {
+    if (coords.parent) |parent| {
+        const pos = get_absolute_position(parent.*);
+        return .{ .x = coords.pos.x + pos.x, .y = coords.pos.y + pos.y};
     }
-
-    return maxx;
+    return .{ .x = coords.pos.x, .y = coords.pos.y };
 }
 
-pub fn get_min_x(tet: *Tetromino) c_int {
-    var min_x = tet.blocks[0].pos.x;
+pub fn get_max_position(tet: *Tetromino) Position {
+    var max_pos = get_absolute_position(tet.blocks[0].coords);
     for (tet.blocks) |block| {
-        if (block.pos.x < min_x) min_x = block.pos.x;
+        var pos = get_absolute_position(block.coords);
+        if (pos.x > max_pos.x) max_pos.x = pos.x;
+        if (pos.y > max_pos.y) max_pos.y = pos.y;
     }
-    return min_x + tet.pos.x;
+    return max_pos;
 }
 
-pub fn get_max_x(tet: *Tetromino) c_int {
-    var max_x = tet.blocks[0].pos.x;
+pub fn get_min_position(tet: *Tetromino) Position {
+    var min_pos = get_absolute_position(tet.blocks[0].coords);
     for (tet.blocks) |block| {
-        if (block.pos.x > max_x) max_x = block.pos.x;
+        var pos = get_absolute_position(block.coords);
+        if (pos.x < min_pos.x) min_pos.x = pos.x;
+        if (pos.y < min_pos.y) min_pos.y = pos.y;
     }
-    // TODO(AW): Remove these additions of tet pos and we can just use the
-    //           absolute position instead?
-    return max_x + tet.pos.x;
-}
-
-pub fn get_min_y(tet: *Tetromino) c_int {
-    var min_y = tet.blocks[0].y;
-    for (tet.blocks) |block| {
-        if (block.y < min_y) min_y = block.y;
-    }
-    return min_y + tet.pos.y;
-}
-
-pub fn get_rotation_offset_max_y(tet: *Tetromino) c_int {
-    const rotatinOffset = get_rotation(tet);
-
-    var maxy = rotatinOffset[0].y;
-
-    for (rotatinOffset) |offset| {
-        if (offset.y > maxy) maxy = offset.y;
-    }
-
-    return maxy;
-}
-
-pub fn get_max_y(tet: *Tetromino) c_int {
-    var max_y = tet.blocks[0].pos.y;
-    for (tet.blocks) |block| {
-        if (max_y < block.pos.y) max_y = block.pos.y;
-    }
-    return max_y + tet.pos.y;
+    return min_pos;
 }
 
 pub fn get_rotation(tet: *Tetromino) *const [4]Position {
@@ -360,84 +357,115 @@ pub fn get_rotation(tet: *Tetromino) *const [4]Position {
 pub fn rotate(tet: *Tetromino) void {
     tet.rotation_offset += 1;
     if (tet.rotation_offset >= 4) tet.rotation_offset = 0;
-    set_blocks_to_rotation(tet);
-}
-
-pub fn bounds_bounce_tetromino(tet: *Tetromino) void {
-    if (get_min_x(tet) <= 1) tet.pos.x = 2;
-    if (get_max_x(tet) > boundary_width_blocks) tet.pos.x = boundary_width_blocks - 1;
-    if (get_max_y(tet) > boundary_height_blocks) tet.pos.y = boundary_height_blocks - 1;
-}
-
-// TODO(AW): Next we want to have both a relative and absolute position for blocks
-pub fn place_tetromino(tet: *Tetromino, blocks: []Block) void {
-     print("place {},{}", .{ tet.pos.x, tet.pos.y });
-
-    for (blocks) |_, index| {
-        blocks[index].tetromino = null;
-        blocks[index].placed = true;
-        blocks[index].visible = true;
-
-        // Setting these blocks down means using absolute position from now on
-        blocks[index].pos.x += tet.pos.x;
-        blocks[index].pos.y += tet.pos.y;
-    }
-
-    tet.block_offset += 1;
-    if (tet.block_offset >= blocks.len) tet.block_offset = 0;
-
-    reset_tetromino(tet);
-}
-
-pub fn placement_available(tet: *Tetromino) bool {
-    const max_y = get_max_y(tet);
-    return (max_y >= boundary_height_blocks);
-}
-
-pub fn move_left(tet: *Tetromino) void {
-    if (get_min_x(tet) > 1) tet.pos.x -= 1;
-}
-
-pub fn move_right(tet: *Tetromino) void {
-    if (get_max_x(tet) < boundary_width_blocks) tet.pos.x += 1;
-}
-
-pub fn move_down(tet: *Tetromino) void {
-    if (get_max_y(tet) < boundary_height_blocks) tet.pos.y += 1;
-}
-
-pub fn reset_tetromino(tet: *Tetromino) void {
-
-    tet.pos.x = boundary_width_blocks / 2;
-    tet.pos.y = 0;
-
-    set_blocks_to_tetromino(tet);
-    set_blocks_to_rotation(tet);
-}
-
-
-pub fn set_blocks_to_tetromino(tet: *Tetromino) void {
-
-    for (tet.blocks) |_, index| {
-        tet.blocks[index].tetromino = tet;
-    }
-
-}
-
-pub fn set_blocks_to_rotation(tet: *Tetromino) void {
 
     const rotation = get_rotation(tet);
 
-    tet.blocks[0].pos.x = rotation[0].x;
-    tet.blocks[0].pos.y = rotation[0].y;
+    for (tet.blocks) |_, index| {
+        tet.blocks[index].coords.pos.x = rotation[index].x;
+        tet.blocks[index].coords.pos.y = rotation[index].y;
+    }
 
-    tet.blocks[1].pos.x = rotation[1].x;
-    tet.blocks[1].pos.y = rotation[1].y;
+}
 
-    tet.blocks[2].pos.x = rotation[2].x;
-    tet.blocks[2].pos.y = rotation[2].y;
+// TODO(AW): Bounds check using the Coordinates in the `field`
+pub fn bounds_bounce_tetromino(tet: *Tetromino) void {
+    const max_pos = get_max_position(tet);
+    const min_pos = get_min_position(tet);
+    if (min_pos.x <= 1) tet.coords.pos.x = 2;
+    if (max_pos.x > boundary_width_blocks) tet.coords.pos.x = boundary_width_blocks - 1;
+    if (max_pos.y > boundary_height_blocks) tet.coords.pos.y = boundary_height_blocks - 1;
+}
 
-    tet.blocks[3].pos.x = rotation[3].x;
-    tet.blocks[3].pos.y = rotation[3].y;
+pub fn place_tetromino(tet: *Tetromino, blocks: []Block) void {
+     print("place {},{}", .{ tet.coords.pos.x, tet.coords.pos.y });
+
+    bounds_bounce_tetromino(tet);
+
+    for (tet.blocks) |_, index| {
+
+        const block = &tet.blocks[index];
+        // Blocks are now free floating where they were placed
+        // they're not part of any particular tetromino
+        block.placed = true;
+
+        const coords = block.coords;
+
+        var pos = .{ .x = coords.pos.x, .y = coords.pos.y };
+
+        if (coords.parent) |parent| {
+
+            pos.x += parent.pos.x;
+            pos.y += parent.pos.y;
+
+            if (parent.parent) |grandparent| {
+
+                pos.x += grandparent.pos.x;
+                pos.y += grandparent.pos.y;
+
+                // The parent is now the global parent instead of the local Tetromino parent
+                block.coords.parent = grandparent;
+                block.coords.pos.x = pos.x;
+                block.coords.pos.y = pos.y;
+                block.colour.r = 0xff;
+                block.colour.g = 0x00;
+                block.colour.b = 0x00;
+
+            }
+        }
+
+    }
+
+    tet.block_offset += 4;
+    if (tet.block_offset >= blocks.len) tet.block_offset = 0;
+
+    tet.blocks = blocks[tet.block_offset..tet.block_offset+4];
+
+    init_tetromino(tet);
+}
+
+// TODO(AW): Bounds check using the `field` coords
+pub fn placement_available(tet: *Tetromino) bool {
+    const max_pos = get_max_position(tet);
+    return (max_pos.y >= boundary_height_blocks);
+}
+
+// TODO(AW): Bounds check using the `field` coords
+pub fn move_left(tet: *Tetromino) void {
+    const min_pos = get_min_position(tet);
+    print("min_pos.x = {}\n", .{min_pos});
+    if (min_pos.x > 1) tet.coords.pos.x -= 1;
+}
+
+// TODO(AW): Bounds check using the `field` coords
+pub fn move_right(tet: *Tetromino) void {
+    const max_pos = get_max_position(tet);
+    print("max_pos.x = {}\n", .{max_pos});
+    print("1 - tet.coords.pos = {}\n", .{tet.coords.pos});
+    if (max_pos.x < boundary_width_blocks) tet.coords.pos.x += 1;
+    print("2 - tet.coords.pos = {}\n", .{tet.coords.pos});
+}
+
+// TODO(AW): Bounds check using the `field` coordss
+pub fn move_down(tet: *Tetromino) void {
+    const max_pos = get_max_position(tet);
+    if (max_pos.y < boundary_height_blocks) tet.coords.pos.y += 1;
+}
+
+pub fn init_tetromino(tet: *Tetromino) void {
+
+    tet.coords.pos.x = boundary_width_blocks / 2;
+    tet.coords.pos.y = 0;
+
+    const rotation = get_rotation(tet);
+
+    for (tet.blocks) |_, index| {
+        const block = &tet.blocks[index];
+        block.visible = true;
+        block.placed = false;
+        block.coords.parent = &tet.coords;
+
+        block.coords.pos.x = rotation[index].x;
+        block.coords.pos.y = rotation[index].y;
+    }
 
 }
