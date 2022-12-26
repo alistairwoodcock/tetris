@@ -180,9 +180,10 @@ pub fn main() !void {
     var seconds_count: u32 = 0;
     var placement_time: u32 = 0;
 
-//    var fast_move_down: bool = false;
+    var fast_move_down: bool = false;
 
     var quit = false;
+    // TODO(AW): Record all events & replay (including time)
     while (!quit) {
         var curr_time = c.SDL_GetTicks();
 
@@ -195,15 +196,17 @@ pub fn main() !void {
 
             seconds_count = 0;
 
-//            move_down(&tet);
+            move_down(&tet);
         }
 
-//        if (fast_move_down) {
-//            move_down(&tet);
-//        }
+        // TODO(AW): Check if any movement is possible before
+        // allowing the move.
+        if (fast_move_down) {
+            move_down(&tet);
+        }
 
         if (placement_available(&tet)) {
-//            fast_move_down = false;
+            fast_move_down = false;
             placement_time += elapsed_time;
         }
 
@@ -231,15 +234,14 @@ pub fn main() !void {
                             move_right(&tet);
                         },
                         c.SDLK_UP => {
-                            rotate(&tet);
-                            bounds_bounce_tetromino(&tet);
+                            if (!fast_move_down) rotate(&tet);
                         },
                         c.SDLK_DOWN => {
                             move_down(&tet);
                         },
                         32 => {
-//                            print("fast move down enabled", .{});
-//                            fast_move_down = true;
+                            print("fast move down enabled", .{});
+                            fast_move_down = true;
                         },
                         114 => { // r
                             init_tetromino(&tet);
@@ -354,30 +356,51 @@ pub fn get_rotation(tet: *Tetromino) *const [4]Position {
     return &rotations[tet.rotation_index + tet.rotation_offset];
 }
 
-pub fn rotate(tet: *Tetromino) void {
-    tet.rotation_offset += 1;
-    if (tet.rotation_offset >= 4) tet.rotation_offset = 0;
+pub fn bounds_bounce_tetromino(tet: *Tetromino) void {
+    const max = get_max_coordinates(tet);
+    const min = get_min_coordinates(tet);
 
-    const rotation = get_rotation(tet);
-
-    for (tet.blocks) |_, index| {
-        tet.blocks[index].coords.pos.x = rotation[index].x;
-        tet.blocks[index].coords.pos.y = rotation[index].y;
-    }
-
+    if (min.pos.x < 0) tet.coords.pos.x = 1;
+    if (max.pos.x >= boundary_width_blocks) tet.coords.pos.x = boundary_width_blocks - 2;
+    if (max.pos.y > boundary_height_blocks + 1) tet.coords.pos.y = boundary_height_blocks;
 }
 
-// TODO(AW): Bounds check using the Coordinates in the `field`
-pub fn bounds_bounce_tetromino(tet: *Tetromino) void {
-    const max_pos = get_max_position(tet);
-    const min_pos = get_min_position(tet);
-    if (min_pos.x <= 1) tet.coords.pos.x = 2;
-    if (max_pos.x > boundary_width_blocks) tet.coords.pos.x = boundary_width_blocks - 1;
-    if (max_pos.y > boundary_height_blocks) tet.coords.pos.y = boundary_height_blocks - 1;
+pub fn get_max_coordinates(tet: *Tetromino) Coordinates {
+    var max = tet.blocks[0].coords;
+
+    // Max coordinates should be in tet's coords, not it's child blocks coords
+    max.pos.x += tet.coords.pos.x;
+    max.pos.y += tet.coords.pos.y;
+
+    for (tet.blocks) |block| {
+        var pos = block.coords.pos;
+        pos.x += tet.coords.pos.x;
+        pos.y += tet.coords.pos.y;
+        if (pos.x > max.pos.x) max.pos.x = pos.x;
+        if (pos.y > max.pos.y) max.pos.y = pos.y;
+    }
+    return max;
+}
+
+pub fn get_min_coordinates(tet: *Tetromino) Coordinates {
+    var min = tet.blocks[0].coords;
+
+    // Max coordinates should be in tet's coords, not it's child blocks coords
+    min.pos.x += tet.coords.pos.x;
+    min.pos.y += tet.coords.pos.y;
+
+    for (tet.blocks) |block| {
+        var pos = block.coords.pos;
+        pos.x += tet.coords.pos.x;
+        pos.y += tet.coords.pos.y;
+        if (pos.x < min.pos.x) min.pos.x = pos.x;
+        if (pos.y < min.pos.y) min.pos.y = pos.y;
+    }
+    return min;
 }
 
 pub fn place_tetromino(tet: *Tetromino, blocks: []Block) void {
-     print("place {},{}", .{ tet.coords.pos.x, tet.coords.pos.y });
+    print("1 - place {},{}\n", .{ tet.coords.pos.x, tet.coords.pos.y });
 
     bounds_bounce_tetromino(tet);
 
@@ -392,15 +415,16 @@ pub fn place_tetromino(tet: *Tetromino, blocks: []Block) void {
 
         var pos = .{ .x = coords.pos.x, .y = coords.pos.y };
 
+        print("2 - place {},{}\n", .{ pos.x, pos.y });
+
         if (coords.parent) |parent| {
 
             pos.x += parent.pos.x;
             pos.y += parent.pos.y;
 
-            if (parent.parent) |grandparent| {
+            print("3 - place {},{}\n", .{ pos.x, pos.y });
 
-                pos.x += grandparent.pos.x;
-                pos.y += grandparent.pos.y;
+            if (parent.parent) |grandparent| {
 
                 // The parent is now the global parent instead of the local Tetromino parent
                 block.coords.parent = grandparent;
@@ -409,6 +433,8 @@ pub fn place_tetromino(tet: *Tetromino, blocks: []Block) void {
                 block.colour.r = 0xff;
                 block.colour.g = 0x00;
                 block.colour.b = 0x00;
+
+                print("4 - place {},{}\n", .{ pos.x, pos.y });
 
             }
         }
@@ -423,32 +449,71 @@ pub fn place_tetromino(tet: *Tetromino, blocks: []Block) void {
     init_tetromino(tet);
 }
 
-// TODO(AW): Bounds check using the `field` coords
 pub fn placement_available(tet: *Tetromino) bool {
-    const max_pos = get_max_position(tet);
-    return (max_pos.y >= boundary_height_blocks);
+    const max = get_max_coordinates(tet);
+    return (max.pos.y >= boundary_height_blocks - 1);
 }
 
-// TODO(AW): Bounds check using the `field` coords
 pub fn move_left(tet: *Tetromino) void {
-    const min_pos = get_min_position(tet);
-    print("min_pos.x = {}\n", .{min_pos});
-    if (min_pos.x > 1) tet.coords.pos.x -= 1;
+    const move = .{ .x = -1, .y = 0 };
+    if (can_move(tet, move)) apply_move(tet, move);
+    bounds_bounce_tetromino(tet);
 }
 
-// TODO(AW): Bounds check using the `field` coords
 pub fn move_right(tet: *Tetromino) void {
-    const max_pos = get_max_position(tet);
-    print("max_pos.x = {}\n", .{max_pos});
-    print("1 - tet.coords.pos = {}\n", .{tet.coords.pos});
-    if (max_pos.x < boundary_width_blocks) tet.coords.pos.x += 1;
-    print("2 - tet.coords.pos = {}\n", .{tet.coords.pos});
+    const move = .{ .x = 1, .y = 0 };
+    if (can_move(tet, move)) apply_move(tet, move);
+    bounds_bounce_tetromino(tet);
 }
 
-// TODO(AW): Bounds check using the `field` coordss
 pub fn move_down(tet: *Tetromino) void {
-    const max_pos = get_max_position(tet);
-    if (max_pos.y < boundary_height_blocks) tet.coords.pos.y += 1;
+    const move = .{ .x = 0, .y = 1 };
+    if (can_move(tet, move)) apply_move(tet, move);
+    bounds_bounce_tetromino(tet);
+}
+
+pub fn apply_move(tet: *Tetromino, move: Position) void {
+    tet.coords.pos.x += move.x;
+    tet.coords.pos.y += move.y;
+}
+
+pub fn can_move(tet: *Tetromino, move: Position) bool {
+    var max = get_max_coordinates(tet);
+    var min = get_min_coordinates(tet);
+
+    // move the current max and min positions
+    // by their next possible movement
+    max.pos.x += move.x;
+    max.pos.y += move.y;
+    min.pos.x += move.x;
+    min.pos.y += move.y;
+
+    var no_collisions = true;
+
+    // TODO(AW): Implement collision checking here
+
+    return
+        (move.y >= 0) and
+        (max.pos.y < boundary_height_blocks) and
+        (max.pos.x <= boundary_width_blocks - 1) and
+        (min.pos.x >= 0) and
+        (no_collisions)
+   ;
+}
+
+
+pub fn rotate(tet: *Tetromino) void {
+    tet.rotation_offset += 1;
+    if (tet.rotation_offset >= 4) tet.rotation_offset = 0;
+
+    const rotation = get_rotation(tet);
+
+    for (tet.blocks) |_, index| {
+        tet.blocks[index].coords.pos.x = rotation[index].x;
+        tet.blocks[index].coords.pos.y = rotation[index].y;
+    }
+
+    bounds_bounce_tetromino(tet);
 }
 
 pub fn init_tetromino(tet: *Tetromino) void {
