@@ -9,8 +9,8 @@ const print = std.debug.print;
 const expect = std.testing.expect;
 
 const Position = struct {
-    x: u8,
-    y: u8,
+    x: i32,
+    y: i32,
 };
 
 const Colour = struct {
@@ -61,19 +61,38 @@ const State = struct {
 
             switch (event.input) {
                 Input.MOVE_LEFT => {
-                    self.tet.x -= 1;
+                    const next = .{ .x = self.tet.x - 1, .y = self.tet.y };
+                    self.move(next);
                 },
                 Input.MOVE_RIGHT => {
-                    self.tet.x += 1;
+                    const next = .{ .x = self.tet.x + 1, .y = self.tet.y };
+                    self.move(next);
                 },
                 Input.MOVE_DOWN => {
-                    self.tet.y += 1;
+                    const next = .{ .x = self.tet.x, .y = self.tet.y + 1 };
+                    self.move(next);
+                },
+                Input.PLACE_TETROMINO => {
+
                 },
                 else => {}
             }
 
         }
 
+    }
+
+    pub fn possible_move(_: Self, next: Position) bool {
+        if (next.x < 0) return false;
+        if (next.x > grid_width - 1) return false;
+        if (next.y < 0) return false;
+        if (next.y > grid_height - 1) return false;
+        return true;
+    }
+
+    pub fn move(self: *Self, next: Position) void {
+        if (!self.possible_move(next)) return;
+        self.tet = next;
     }
 
     pub fn reset(self: *Self) void {
