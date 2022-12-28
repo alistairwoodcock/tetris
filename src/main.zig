@@ -49,7 +49,7 @@ const State = struct {
     time_delta: u32,
     curr_time: u32,
 
-    tet_pos: u32,
+    tet: Position,
 
     pub fn process(self: *Self, events: []Event) void {
 
@@ -61,13 +61,13 @@ const State = struct {
 
             switch (event.input) {
                 Input.MOVE_LEFT => {
-                    if (self.tet_pos > 0) self.tet_pos -= 1; // not correct!
+                    self.tet.x -= 1;
                 },
                 Input.MOVE_RIGHT => {
-                    self.tet_pos += 1; // not correct!
+                    self.tet.x += 1;
                 },
                 Input.MOVE_DOWN => {
-                    self.tet_pos += grid_width; // not correct!
+                    self.tet.y += 1;
                 },
                 else => {}
             }
@@ -79,7 +79,8 @@ const State = struct {
     pub fn reset(self: *Self) void {
         self.time_delta = 0;
         self.curr_time = 0;
-        self.tet_pos = 0;
+        self.tet.x = 0;
+        self.tet.y = 0;
     }
 };
 
@@ -169,11 +170,15 @@ pub fn main() !void {
         }
         // Tetromino Blocks
         {
-            var x: c_int = 1 * block_width;
-            var y: c_int = 4 * block_width;
+            // Offsets of the grid for rendering
+            var x: c_int = 1;
+            var y: c_int = 4;
 
-            x += @mod(@intCast(c_int, state.tet_pos), @intCast(c_int, grid_width)) * block_width;
-            y += @divFloor(@intCast(c_int, state.tet_pos), @intCast(c_int, grid_height)) * block_width;
+            x += state.tet.x;
+            y += state.tet.y;
+
+            x *= block_width;
+            y *= block_width;
 
             const rect = c.SDL_Rect{ .x = x, .y = y, .w = block_width, .h = block_width };
             _ = c.SDL_SetRenderDrawColor(renderer, 0xcc, 0xcc, 0xff, 0xff);
