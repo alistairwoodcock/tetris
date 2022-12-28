@@ -50,6 +50,21 @@ const State = struct {
     curr_time: u32,
 
     tet: Position,
+    tet_drop: bool = false,
+    tet_drop_speed: u32 = 1,
+    tet_drop_max_speed_ms: u32 = 2000,
+    tet_drop_timer: u32 = 0,
+
+    pub fn reset(self: *Self) void {
+        self.tet_drop = false;
+        self.tet_drop_speed = 500;
+        self.tet_drop_max_speed_ms = 1000;
+        self.tet_drop_timer = 0;
+        self.time_delta = 0;
+        self.curr_time = 0;
+        self.tet.x = 0;
+        self.tet.y = 0;
+    }
 
     pub fn process(self: *Self, events: []Event) void {
 
@@ -57,22 +72,45 @@ const State = struct {
             self.time_delta = event.time - self.curr_time;
             self.curr_time = event.time;
 
-            print("event = {} \n time_delta = {} \n curr_time = {}", .{event, self.time_delta, self.curr_time});
+            print("event = {} \n time_delta = {} \n curr_time = {} \n", .{event, self.time_delta, self.curr_time});
+
+            if (self.tet_drop) {
+
+                // TODO(AW) Turn this into the consistent drop and then do
+                //          a separate one for the placement
+                self.tet_drop_timer += self.time_delta;
+
+                if (self.tet_drop_timer >= (self.tet_drop_max_speed_ms / self.tet_drop_speed)) {
+                    // every 1 second we drop
+                    self.tet_drop_timer = 0;
+                    const next = .{ .x = self.tet.x, .y = self.tet.y + 1 };
+                    print("drop next = {} \n", .{next});
+                    self.move(next);
+
+                }
+            }
 
             switch (event.input) {
                 Input.MOVE_LEFT => {
+                    if (self.ignore_input()) break;
                     const next = .{ .x = self.tet.x - 1, .y = self.tet.y };
                     self.move(next);
                 },
                 Input.MOVE_RIGHT => {
+                    if (self.ignore_input()) break;
                     const next = .{ .x = self.tet.x + 1, .y = self.tet.y };
                     self.move(next);
                 },
                 Input.MOVE_DOWN => {
+                    if (self.ignore_input()) break;
                     const next = .{ .x = self.tet.x, .y = self.tet.y + 1 };
                     self.move(next);
                 },
                 Input.PLACE_TETROMINO => {
+                    if (self.ignore_input()) break;
+
+                    // TODO(AW): Moving tet down based on time delta
+                    self.tet_drop = true;
 
                 },
                 else => {}
@@ -80,6 +118,10 @@ const State = struct {
 
         }
 
+    }
+
+    pub fn ignore_input(self: Self) bool {
+        return self.tet_drop;
     }
 
     pub fn possible_move(_: Self, next: Position) bool {
@@ -95,12 +137,6 @@ const State = struct {
         self.tet = next;
     }
 
-    pub fn reset(self: *Self) void {
-        self.time_delta = 0;
-        self.curr_time = 0;
-        self.tet.x = 0;
-        self.tet.y = 0;
-    }
 };
 
 pub fn main() !void {
@@ -135,9 +171,21 @@ pub fn main() !void {
 
     var quit = false;
 
+    var prev_time: u32 = 0;
+    var curr_time = c.SDL_GetTicks();
+    var last_tick_event: u32 = 0;
+
     while (!quit) {
 
-        var curr_time = c.SDL_GetTicks();
+        prev_time = curr_time;
+        curr_time = c.SDL_GetTicks();
+
+        if (curr_time - last_tick_event > 15) {
+            last_tick_event = curr_time;
+            print("append event {}    events.length = {}\n", .{curr_time, events.items.len});
+            const event: Event = .{ .input = Input.NONE, .time =  curr_time };
+            try events.append(event);
+        }
 
         var sdl_event: c.SDL_Event = undefined;
 
