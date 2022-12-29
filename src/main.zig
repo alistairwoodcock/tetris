@@ -77,7 +77,7 @@ const State = struct {
         self.blocks = std.ArrayList(Position).init(allocator);
 
         self.tet_commit_place = false;
-        self.tet_commit_place_speed = 600;
+        self.tet_commit_place_speed = 1000;
         self.tet_commit_place_max_speed_ms = 2000;
         self.tet_commit_place_timer = 0;
 
@@ -113,7 +113,7 @@ const State = struct {
 
             const next_down = .{ .x = self.tet.x, .y = self.tet.y + 1 };
 
-//            print("event = {} \n time_delta = {} \n curr_time = {} \n", .{event, self.time_delta, self.curr_time});
+            // print("event = {} \n time_delta = {} \n curr_time = {} \n", .{event, self.time_delta, self.curr_time});
 
             if (self.tet_commit_place) {
 
@@ -126,12 +126,13 @@ const State = struct {
                     self.move(next_down, self.tet_rotation);
                 }
 
-                // If it can't mvoe down anymore, we place the tet and add as blocks
+                // If it can't move down anymore, we place the tet and add as blocks
                 if (!self.possible_move(next_down, self.tet_rotation)) {
                     try self.place_tet();
                 }
             }
 
+            // Timer based placement if movement down is not possible
             if (!self.possible_move(next_down, self.tet_rotation)) {
                 self.tet_place_timer += self.time_delta;
 
@@ -152,6 +153,68 @@ const State = struct {
                 print("drop next = {} \n", .{next});
                 self.move(next, self.tet_rotation);
 
+            }
+
+            print("\n\n", .{});
+
+            // TODO(AW): Cleanup & implement dropping above rows down
+
+            var move_row_down = false;
+            var grid_y: u32 = grid_height;
+            while (grid_y > 0): (grid_y -= 1) {
+
+                var full_row = true;
+
+                var row_block_indexes = [_]usize{0} ** (grid_width);
+
+                {
+                    var grid_x: u32 = 0;
+                    while (grid_x < grid_width): (grid_x += 1) {
+
+                        var block_exists_at_coord = false;
+
+                        for (self.blocks.items) |block, index| {
+
+                            if (block.x != grid_x or block.y != grid_y) continue;
+
+                            block_exists_at_coord = true;
+
+                            row_block_indexes[grid_x] = index;
+
+                            break;
+                        }
+
+                        if (!block_exists_at_coord) {
+                            print("[ ]", .{});
+                            full_row = false;
+                        } else {
+                            print("[x]", .{});
+                        }
+                    }
+                }
+
+                print("\n", .{});
+
+                // We have a full row at this grid_y coord
+                // clear the row
+                if (full_row) {
+
+                    var grid_x: u32 = 0;
+                    while (grid_x < grid_width): (grid_x += 1) {
+                        for (self.blocks.items) |_| {
+                            var block = self.blocks.orderedRemove(0);
+                            if (block.x != grid_x or block.y != grid_y) {
+                               try self.blocks.append(block);
+                            } else {
+                                // is the block, so we want to remove it
+                                // do nothing here
+                            }
+                        }
+                    }
+
+                    move_row_down = true;
+
+                }
             }
 
             switch (event.input) {
