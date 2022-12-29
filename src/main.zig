@@ -56,11 +56,17 @@ const State = struct {
     tet_rotation: u8 = 0,
     tet_blocks: [4]Position,
 
-    tet_place: bool = false,
-    tet_place_speed: u32 = 600,
-    tet_place_max_speed_ms: u32 = 2000,
-    tet_place_timer: u32 = 0,
+    // Hit spacebar and this commits to placing it
+    tet_commit_place: bool = false,
+    tet_commit_place_speed: u32 = 600,
+    tet_commit_place_max_speed_ms: u32 = 2000,
+    tet_commit_place_timer: u32 = 0,
 
+    // Timer for turning the tet into block if no movement
+    tet_place_timer: u32 = 0,
+    tet_place_max_time_ms: u32 = 1000,
+
+    // Speed for dropping tetromino
     tet_drop_speed: u32 = 1,
     tet_drop_max_speed_ms: u32 = 2000,
     tet_drop_timer: u32 = 0,
@@ -70,44 +76,13 @@ const State = struct {
         // TODO(AW): Free allocated memory
         self.blocks = std.ArrayList(Position).init(allocator);
 
-        try self.blocks.append(.{
-            .x = 2,
-            .y = 10,
-        });
+        self.tet_commit_place = false;
+        self.tet_commit_place_speed = 600;
+        self.tet_commit_place_max_speed_ms = 2000;
+        self.tet_commit_place_timer = 0;
 
-        try self.blocks.append(.{
-            .x = 3,
-            .y = 10,
-        });
-
-        try self.blocks.append(.{
-            .x = 4,
-            .y = 10,
-        });
-
-        try self.blocks.append(.{
-            .x = 0,
-            .y = 19,
-        });
-        try self.blocks.append(.{
-            .x = 1,
-            .y = 19,
-        });
-
-        try self.blocks.append(.{
-            .x = 1,
-            .y = 18,
-        });
-
-        try self.blocks.append(.{
-            .x = 1,
-            .y = 17,
-        });
-
-        self.tet_place = false;
-        self.tet_place_speed = 600;
-        self.tet_place_max_speed_ms = 2000;
         self.tet_place_timer = 0;
+        self.tet_place_max_time_ms = 1000;
 
         self.tet_drop_speed = 1;
         self.tet_drop_max_speed_ms = 1000;
@@ -115,36 +90,57 @@ const State = struct {
 
         self.time_delta = 0;
         self.curr_time = 0;
-        self.tet.x = 0;
+
+        self.reset_tet();
+
+    }
+
+    pub fn reset_tet(self: *Self) void {
+
+        self.tet.x = grid_width/2 - 1;
         self.tet.y = 0;
         self.tet_shape = 0;
         self.tet_rotation = 0;
 
         self.tet_blocks = self.project_blocks(self.tet, self.tet_rotation);
-
-
     }
 
-    pub fn process(self: *Self, events: []Event) void {
+    pub fn process(self: *Self, events: []Event) !void {
 
         for (events) |event| {
             self.time_delta = event.time - self.curr_time;
             self.curr_time = event.time;
 
+            const next_down = .{ .x = self.tet.x, .y = self.tet.y + 1 };
+
 //            print("event = {} \n time_delta = {} \n curr_time = {} \n", .{event, self.time_delta, self.curr_time});
 
-            if (self.tet_place) {
+            if (self.tet_commit_place) {
 
+                self.tet_commit_place_timer += self.time_delta;
+
+                if (self.tet_commit_place_timer >= (self.tet_commit_place_max_speed_ms / self.tet_commit_place_speed)) {
+
+                    self.tet_commit_place_timer = 0;
+
+                    self.move(next_down, self.tet_rotation);
+                }
+
+                // If it can't mvoe down anymore, we place the tet and add as blocks
+                if (!self.possible_move(next_down, self.tet_rotation)) {
+                    try self.place_tet();
+                }
+            }
+
+            if (!self.possible_move(next_down, self.tet_rotation)) {
                 self.tet_place_timer += self.time_delta;
 
-                if (self.tet_place_timer >= (self.tet_place_max_speed_ms / self.tet_place_speed)) {
-
+                if (self.tet_place_timer >= self.tet_place_max_time_ms) {
                     self.tet_place_timer = 0;
-                    const next = .{ .x = self.tet.x, .y = self.tet.y + 1 };
-
-                    self.move(next, self.tet_rotation);
-
+                    try self.place_tet();
                 }
+            } else {
+                self.tet_place_timer = 0;
             }
 
             self.tet_drop_timer += self.time_delta;
@@ -206,7 +202,7 @@ const State = struct {
                 Input.PLACE_TETROMINO => {
                     if (self.ignore_input()) break;
 
-                    self.tet_place = true;
+                    self.tet_commit_place = true;
 
                 },
                 else => {
@@ -219,7 +215,7 @@ const State = struct {
     }
 
     pub fn ignore_input(self: Self) bool {
-        return self.tet_place;
+        return self.tet_commit_place;
     }
 
     pub fn possible_move(self: Self, next: Position, rotation: u8) bool {
@@ -257,6 +253,20 @@ const State = struct {
             .{ .x = pos.x + rotations[2].x, .y = pos.y + rotations[2].y },
             .{ .x = pos.x + rotations[3].x, .y = pos.y + rotations[3].y }
         };
+    }
+
+    pub fn place_tet(self: *Self) !void {
+
+        // Create blocks in tets current position
+        for (self.tet_blocks) |block| {
+            try self.blocks.append(block);
+        }
+
+        self.reset_tet();
+
+        // Place disabled
+        self.tet_commit_place = false;
+
     }
 
 };
@@ -341,7 +351,7 @@ pub fn main() !void {
         }
 
         if (index < events.items.len) {
-            state.process(events.items[index..(index+1)]);
+            try state.process(events.items[index..(index+1)]);
             index += 1;
         }
 
