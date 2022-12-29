@@ -179,7 +179,29 @@ const State = struct {
                     const next = .{ .x = self.tet.x, .y = self.tet.y };
                     var next_rotation = self.tet_rotation + 1;
                     if (next_rotation > 3) next_rotation = 0;
-                    self.move(next, next_rotation);
+
+                    if (self.possible_move(next, next_rotation)) {
+                        self.move(next, next_rotation);
+                    } else {
+                        // Rotation not possible directly but we
+                        // might be able to do a 'bounce'
+
+                        // Check every direction of a possible bounce
+                        // with the given rotation, pick the first one
+
+                        const up_bounce     = .{ .x = self.tet.x,       .y = self.tet.y - 1 };
+                        const down_bounce   = .{ .x = self.tet.x,       .y = self.tet.y + 1 };
+                        const left_bounce   = .{ .x = self.tet.x - 1,   .y = self.tet.y     };
+                        const right_bounce  = .{ .x = self.tet.x + 1,   .y = self.tet.y     };
+
+                        const bounces = [_]Position{ up_bounce, down_bounce, left_bounce, right_bounce };
+                        for (bounces) |bounce| {
+                            if (self.possible_move(bounce, next_rotation)) {
+                                self.move(bounce, next_rotation);
+                                break;
+                            }
+                        }
+                    }
                 },
                 Input.PLACE_TETROMINO => {
                     if (self.ignore_input()) break;
