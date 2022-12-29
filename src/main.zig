@@ -49,7 +49,12 @@ const State = struct {
     time_delta: u32,
     curr_time: u32,
 
+    blocks: std.ArrayList(Position),
+
     tet: Position,
+    tet_shape: u8 = 0,
+    tet_rotation: u8 = 0,
+    tet_blocks: [4]Position,
 
     tet_place: bool = false,
     tet_place_speed: u32 = 600,
@@ -60,7 +65,44 @@ const State = struct {
     tet_drop_max_speed_ms: u32 = 2000,
     tet_drop_timer: u32 = 0,
 
-    pub fn reset(self: *Self) void {
+    pub fn reset(self: *Self) !void {
+
+        // TODO(AW): Free allocated memory
+        self.blocks = std.ArrayList(Position).init(allocator);
+
+        try self.blocks.append(.{
+            .x = 2,
+            .y = 10,
+        });
+
+        try self.blocks.append(.{
+            .x = 3,
+            .y = 10,
+        });
+
+        try self.blocks.append(.{
+            .x = 4,
+            .y = 10,
+        });
+
+        try self.blocks.append(.{
+            .x = 0,
+            .y = 19,
+        });
+        try self.blocks.append(.{
+            .x = 1,
+            .y = 19,
+        });
+
+        try self.blocks.append(.{
+            .x = 1,
+            .y = 18,
+        });
+
+        try self.blocks.append(.{
+            .x = 1,
+            .y = 17,
+        });
 
         self.tet_place = false;
         self.tet_place_speed = 600;
@@ -75,6 +117,12 @@ const State = struct {
         self.curr_time = 0;
         self.tet.x = 0;
         self.tet.y = 0;
+        self.tet_shape = 0;
+        self.tet_rotation = 0;
+
+        self.tet_blocks = self.project_blocks(self.tet, self.tet_rotation);
+
+
     }
 
     pub fn process(self: *Self, events: []Event) void {
@@ -83,7 +131,7 @@ const State = struct {
             self.time_delta = event.time - self.curr_time;
             self.curr_time = event.time;
 
-            print("event = {} \n time_delta = {} \n curr_time = {} \n", .{event, self.time_delta, self.curr_time});
+//            print("event = {} \n time_delta = {} \n curr_time = {} \n", .{event, self.time_delta, self.curr_time});
 
             if (self.tet_place) {
 
@@ -94,7 +142,7 @@ const State = struct {
                     self.tet_place_timer = 0;
                     const next = .{ .x = self.tet.x, .y = self.tet.y + 1 };
 
-                    self.move(next);
+                    self.move(next, self.tet_rotation);
 
                 }
             }
@@ -106,7 +154,7 @@ const State = struct {
                 self.tet_drop_timer = 0;
                 const next = .{ .x = self.tet.x, .y = self.tet.y + 1 };
                 print("drop next = {} \n", .{next});
-                self.move(next);
+                self.move(next, self.tet_rotation);
 
             }
 
@@ -114,17 +162,24 @@ const State = struct {
                 Input.MOVE_LEFT => {
                     if (self.ignore_input()) break;
                     const next = .{ .x = self.tet.x - 1, .y = self.tet.y };
-                    self.move(next);
+                    self.move(next, self.tet_rotation);
                 },
                 Input.MOVE_RIGHT => {
                     if (self.ignore_input()) break;
                     const next = .{ .x = self.tet.x + 1, .y = self.tet.y };
-                    self.move(next);
+                    self.move(next, self.tet_rotation);
                 },
                 Input.MOVE_DOWN => {
                     if (self.ignore_input()) break;
                     const next = .{ .x = self.tet.x, .y = self.tet.y + 1 };
-                    self.move(next);
+                    self.move(next, self.tet_rotation);
+                },
+                Input.ROTATE => {
+                    if (self.ignore_input()) break;
+                    const next = .{ .x = self.tet.x, .y = self.tet.y };
+                    var next_rotation = self.tet_rotation + 1;
+                    if (next_rotation > 3) next_rotation = 0;
+                    self.move(next, next_rotation);
                 },
                 Input.PLACE_TETROMINO => {
                     if (self.ignore_input()) break;
@@ -145,17 +200,41 @@ const State = struct {
         return self.tet_place;
     }
 
-    pub fn possible_move(_: Self, next: Position) bool {
-        if (next.x < 0) return false;
-        if (next.x > grid_width - 1) return false;
-        if (next.y < 0) return false;
-        if (next.y > grid_height - 1) return false;
+    pub fn possible_move(self: Self, next: Position, rotation: u8) bool {
+
+        const next_blocks = self.project_blocks(next, rotation);
+
+        for (next_blocks) |next_block| {
+            if (next_block.x < 0) return false;
+            if (next_block.x > grid_width - 1) return false;
+            if (next_block.y < 0) return false;
+            if (next_block.y > grid_height - 1) return false;
+
+            for (self.blocks.items) |block| {
+                if (next_block.x == block.x and next_block.y == block.y) return false;
+            }
+        }
+
         return true;
     }
 
-    pub fn move(self: *Self, next: Position) void {
-        if (!self.possible_move(next)) return;
+    pub fn move(self: *Self, next: Position, rotation: u8) void {
+        if (!self.possible_move(next, rotation)) return;
         self.tet = next;
+        self.tet_rotation = rotation;
+        self.tet_blocks = self.project_blocks(next, rotation);
+    }
+
+    pub fn project_blocks(self: Self, pos: Position, rotation: u8) [4]Position {
+
+        const rotations = shape_rotations[self.tet_shape][rotation];
+
+        return [4]Position{
+            .{ .x = pos.x + rotations[0].x, .y = pos.y + rotations[0].y },
+            .{ .x = pos.x + rotations[1].x, .y = pos.y + rotations[1].y },
+            .{ .x = pos.x + rotations[2].x, .y = pos.y + rotations[2].y },
+            .{ .x = pos.x + rotations[3].x, .y = pos.y + rotations[3].y }
+        };
     }
 
 };
@@ -186,7 +265,7 @@ pub fn main() !void {
 
     var state = try allocator.create(State);
     defer allocator.destroy(state);
-    state.reset();
+    try state.reset();
 
     var index: usize = 0;
 
@@ -203,7 +282,7 @@ pub fn main() !void {
 
         if (curr_time - last_tick_event > 15) {
             last_tick_event = curr_time;
-            print("append event {}    events.length = {}\n", .{curr_time, events.items.len});
+//            print("append event {}    events.length = {}\n", .{curr_time, events.items.len});
             const event: Event = .{ .input = Input.NONE, .time =  curr_time };
             try events.append(event);
         }
@@ -218,7 +297,7 @@ pub fn main() !void {
                     switch (sdl_event.key.keysym.sym) {
                         114 => { // r
                             print("Replay events from beginning. Resetting state \n", .{});
-                            state.reset();
+                            try state.reset();
                             index = 0;
                         },
                         else => {
@@ -248,9 +327,12 @@ pub fn main() !void {
         _ = c.SDL_SetRenderDrawColor(renderer, 96, 128, 255, 255);
         _ = c.SDL_RenderClear(renderer);
 
+        const grid_offset_x = 1;
+        const grid_offset_y = 4;
+
         {
-            const x = 1 * block_width;
-            const y = 4 * block_width;
+            const x = grid_offset_x * block_width;
+            const y = grid_offset_y * block_width;
 
             const rect = c.SDL_Rect{ .x = x, .y = y, .w = boundary_width, .h = boundary_height };
             _ = c.SDL_SetRenderDrawColor(renderer, 0xef, 0xef, 0xef, 0xff);
@@ -259,8 +341,27 @@ pub fn main() !void {
         // Tetromino Blocks
         {
             // Offsets of the grid for rendering
-            var x: c_int = 1;
-            var y: c_int = 4;
+            var x: c_int = grid_offset_x;
+            var y: c_int = grid_offset_y;
+
+            for (state.tet_blocks) |block| {
+
+                x = grid_offset_x;
+                y = grid_offset_y;
+
+                x += block.x;
+                y += block.y;
+
+                x *= block_width;
+                y *= block_width;
+
+                const brect = c.SDL_Rect{ .x = x, .y = y, .w = block_width, .h = block_width };
+                _ = c.SDL_SetRenderDrawColor(renderer, 0x11, 0xff, 0x11, 0xff);
+                _ = c.SDL_RenderFillRect(renderer, &brect);
+            }
+
+            x = grid_offset_x;
+            y = grid_offset_y;
 
             x += state.tet.x;
             y += state.tet.y;
@@ -269,8 +370,29 @@ pub fn main() !void {
             y *= block_width;
 
             const rect = c.SDL_Rect{ .x = x, .y = y, .w = block_width, .h = block_width };
-            _ = c.SDL_SetRenderDrawColor(renderer, 0xcc, 0xcc, 0xff, 0xff);
+            _ = c.SDL_SetRenderDrawColor(renderer, 0xcc, 0xff, 0xff, 0xff);
             _ = c.SDL_RenderFillRect(renderer, &rect);
+
+
+        }
+
+        // Placed Blocks
+        {
+
+            for (state.blocks.items) |block| {
+                var x: c_int = grid_offset_x;
+                var y: c_int = grid_offset_y;
+
+                x += block.x;
+                y += block.y;
+
+                x *= block_width;
+                y *= block_width;
+
+                const rect = c.SDL_Rect{ .x = x, .y = y, .w = block_width, .h = block_width };
+                _ = c.SDL_SetRenderDrawColor(renderer, 0xee, 0x11, 0x11, 0xff);
+                _ = c.SDL_RenderFillRect(renderer, &rect);
+            }
 
         }
 
@@ -290,3 +412,78 @@ pub fn sdl_event_to_input(sdl_event: c.SDL_Event) Input {
     }
     return Input.NONE;
 }
+
+const shape_rotations = [_][4][4]Position{
+
+    [4][4]Position {
+        //
+        //[][][]
+        //  []
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = -1, .y = 0 }, .{ .x = 0, .y = 1 } },
+
+        //  []
+        //[][]
+        //  []
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 1 }, .{ .x = 0, .y = -1 }, .{ .x = -1, .y = 0 } },
+
+        //  []
+        //[][][]
+        //
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = -1, .y = 0 }, .{ .x = 0, .y = -1 } },
+
+        //  []
+        //  [][]
+        //  []
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 1 }, .{ .x = 0, .y = -1 }, .{ .x = 1, .y = 0 } },
+    },
+
+    [4][4]Position {
+
+        //  []
+        //  []
+        //  []
+        //  []
+        [_]Position{ .{ .x = 0, .y = -1 }, .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 1 }, .{ .x = 0, .y = 2 } },
+
+        //
+        //[][][][]
+        //
+        [_]Position{ .{ .x = -1, .y = 0 }, .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = 2, .y = 0 } },
+
+        //  []
+        //  []
+        //  []
+        //  []
+        [_]Position{ .{ .x = 0, .y = -1 }, .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 1 }, .{ .x = 0, .y = 2 } },
+
+        //
+        //[][][][]
+        //
+        [_]Position{ .{ .x = -1, .y = 0 }, .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = 2, .y = 0 } },
+
+    },
+
+    [4][4]Position {
+
+        //[]
+        //[][][]
+        //
+        [_]Position{ .{ .x = -1, .y = -1 }, .{ .x = -1, .y = 0 }, .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 } },
+
+        //  [][]
+        //  []
+        //  []
+        [_]Position{ .{ .x = 1, .y = -1 }, .{ .x = 0, .y = -1 }, .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 1 } },
+
+        //
+        //[][][]
+        //    []
+        [_]Position{ .{ .x = -1, .y = 0 }, .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = 1, .y = 1 } },
+
+        //  []
+        //  []
+        //[][]
+        [_]Position{ .{ .x = 0, .y = -1 }, .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 1 }, .{ .x = -1, .y = 1 } },
+
+    }
+};
