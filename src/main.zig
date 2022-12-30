@@ -92,7 +92,9 @@ const State = struct {
 
     pub fn reset(self: *Self) !void {
 
-        rnd = rand.init(0);
+        var seed: u64 = undefined;
+        try std.os.getrandom(std.mem.asBytes(&seed));
+        rnd = rand.init(seed);
 
         // TODO(AW): Free allocated memory
         self.blocks = std.ArrayList(Block).init(allocator);
