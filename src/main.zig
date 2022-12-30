@@ -155,65 +155,21 @@ const State = struct {
 
             }
 
-            print("\n\n", .{});
-
-            // TODO(AW): Cleanup & implement dropping above rows down
-
-            var move_row_down = false;
-            var grid_y: u32 = grid_height;
+            var down_movement: i32 = 0;
+            var grid_y: i32 = grid_height;
             while (grid_y > 0): (grid_y -= 1) {
-
-                var full_row = true;
-
-                var row_block_indexes = [_]usize{0} ** (grid_width);
-
-                {
-                    var grid_x: u32 = 0;
-                    while (grid_x < grid_width): (grid_x += 1) {
-
-                        var block_exists_at_coord = false;
-
-                        for (self.blocks.items) |block, index| {
-
-                            if (block.x != grid_x or block.y != grid_y) continue;
-
-                            block_exists_at_coord = true;
-
-                            row_block_indexes[grid_x] = index;
-
-                            break;
-                        }
-
-                        if (!block_exists_at_coord) {
-                            print("[ ]", .{});
-                            full_row = false;
-                        } else {
-                            print("[x]", .{});
-                        }
+                if (self.full_row(grid_y)) {
+                    down_movement += 1;
+                    for (self.blocks.items) |_| {
+                        var block = self.blocks.orderedRemove(0);
+                        // Reinsert if not on this current row
+                        if (block.y != grid_y) try self.blocks.append(block);
                     }
-                }
-
-                print("\n", .{});
-
-                // We have a full row at this grid_y coord
-                // clear the row
-                if (full_row) {
-
-                    var grid_x: u32 = 0;
-                    while (grid_x < grid_width): (grid_x += 1) {
-                        for (self.blocks.items) |_| {
-                            var block = self.blocks.orderedRemove(0);
-                            if (block.x != grid_x or block.y != grid_y) {
-                               try self.blocks.append(block);
-                            } else {
-                                // is the block, so we want to remove it
-                                // do nothing here
-                            }
-                        }
+                } else {
+                    for (self.blocks.items) |block, index| {
+                        if (block.y != grid_y) continue;
+                        self.blocks.items[index].y += down_movement;
                     }
-
-                    move_row_down = true;
-
                 }
             }
 
@@ -275,6 +231,24 @@ const State = struct {
 
         }
 
+    }
+
+    pub fn full_row(self: Self, row: i32) bool {
+        var grid_x: i32 = 0;
+        while (grid_x < grid_width): (grid_x += 1) {
+            if (!self.block_exists_at_position(.{ .x = grid_x, .y = row })) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    pub fn block_exists_at_position(self: Self, pos: Position) bool {
+        for (self.blocks.items) |block| {
+            if (block.x != pos.x or block.y != pos.y) continue;
+            return true;
+        }
+        return false;
     }
 
     pub fn ignore_input(self: Self) bool {
@@ -395,6 +369,13 @@ pub fn main() !void {
                             try state.reset();
                             index = 0;
                         },
+                        116 => { // t
+                            print("Reset current state \n", .{});
+                            events.deinit();
+                            events = std.ArrayList(Event).init(allocator);
+                            index = 0;
+                            try state.reset();
+                        },
                         else => {
 
                             const input = sdl_event_to_input(sdl_event);
@@ -433,6 +414,9 @@ pub fn main() !void {
             _ = c.SDL_SetRenderDrawColor(renderer, 0xef, 0xef, 0xef, 0xff);
             _ = c.SDL_RenderFillRect(renderer, &rect);
         }
+
+        _ = c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND);
+
         // Tetromino Blocks
         {
             // Offsets of the grid for rendering
@@ -485,7 +469,7 @@ pub fn main() !void {
                 y *= block_width;
 
                 const rect = c.SDL_Rect{ .x = x, .y = y, .w = block_width, .h = block_width };
-                _ = c.SDL_SetRenderDrawColor(renderer, 0xee, 0x11, 0x11, 0xff);
+                _ = c.SDL_SetRenderDrawColor(renderer, 0xee, 0x11, 0x11, 0x10);
                 _ = c.SDL_RenderFillRect(renderer, &rect);
             }
 
