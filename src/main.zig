@@ -58,6 +58,9 @@ var rnd = rand.init(0);
 const State = struct {
     const Self = @This();
 
+    paused: bool = false,
+    failed: bool = false,
+
     time_delta: u32,
     curr_time: u32,
 
@@ -92,11 +95,15 @@ const State = struct {
 
     pub fn reset(self: *Self) !void {
 
+        self.paused = false;
+        self.failed = false;
+
         var seed: u64 = undefined;
         try std.os.getrandom(std.mem.asBytes(&seed));
         rnd = rand.init(seed);
 
         // TODO(AW): Free allocated memory
+//        self.blocks.deinit();
         self.blocks = std.ArrayList(Block).init(allocator);
 
         self.tet_commit_place = false;
@@ -153,14 +160,13 @@ const State = struct {
 
     pub fn process(self: *Self, events: []Event) !void {
 
+        if (self.failed or self.paused) return;
+
         for (events) |event| {
             self.time_delta = event.time - self.curr_time;
             self.curr_time = event.time;
 
-            // TODO(AW): For ending the game, do a check where if there's an tet_block
-            //           above grid (y < 0) and it can't move down
-
-            const next_down = .{ .x = self.tet.x, .y = self.tet.y + 1 };
+            var next_down  = .{ .x = self.tet.x,      .y = self.tet.y + 1 };
 
             if (event.input != Input.NONE) {
                 print("event = {} \n time_delta = {} \n curr_time = {} \n", .{event, self.time_delta, self.curr_time});
@@ -292,6 +298,23 @@ const State = struct {
                 if (self.move_down) {
                     const next = .{ .x = self.tet.x, .y = self.tet.y + 1 };
                     self.move(next, self.tet_rotation);
+                }
+
+            }
+
+            {
+                next_down  = .{ .x = self.tet.x,      .y = self.tet.y + 1 };
+                const next_left  = .{ .x = self.tet.x - 1,  .y = self.tet.y     };
+                const next_right = .{ .x = self.tet.x + 1,  .y = self.tet.y     };
+
+                // TODO(AW): For ending the game, do a check where if there's an tet_block
+                //           above grid (y < 0) and it can't move down
+                if (self.tet.y == 1 and
+                    !self.possible_move(next_down, self.tet_rotation) and
+                    !self.possible_move(next_left, self.tet_rotation) and
+                    !self.possible_move(next_right, self.tet_rotation)
+                ) {
+                    self.failed = true;
                 }
 
             }
@@ -493,14 +516,9 @@ pub fn main() !void {
 
                     switch (sdl_event.key.keysym.sym) {
                         112 => { // p
-                            paused = !paused;
+                            state.paused = !state.paused;
                         },
                         114 => { // r
-                            print("Replay events from beginning. Resetting state \n", .{});
-                            try state.reset();
-                            index = 0;
-                        },
-                        116 => { // t
                             print("Reset current state \n", .{});
 
                             allocator.destroy(state);
@@ -512,14 +530,31 @@ pub fn main() !void {
                             index = 0;
                             try state.reset();
                         },
+                        116 => { // t
+                            print("Replay events from beginning. Resetting state \n", .{});
+                            try state.reset();
+                            index = 0;
+                        },
                         else => {
 
                             const input = sdl_keydown_event_to_input(sdl_event);
                             if (input == Input.NONE) break;
 
-                            print("game_event = {} \n", .{input});
-                            const event: Event = .{ .input = input, .time =  curr_time };
-                            try events.append(event);
+                            if (state.failed and sdl_event.key.keysym.sym == 32) {
+
+                                allocator.destroy(state);
+                                state = try allocator.create(State);
+
+                                events.deinit();
+                                events = std.ArrayList(Event).init(allocator);
+
+                                index = 0;
+                                try state.reset();
+
+                            } else {
+                                const event: Event = .{ .input = input, .time =  curr_time };
+                                try events.append(event);
+                            }
 
                         }
                     }
@@ -662,7 +697,7 @@ pub fn main() !void {
 
         // pause overlay
         {
-            if (paused) {
+            if (state.paused or state.failed) {
 
                 _ = c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND);
 
