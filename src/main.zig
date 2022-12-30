@@ -44,7 +44,7 @@ const Event = struct {
 
 const block_width = 32;
 const screen_width = 384 + 256;
-const screen_height = 704 + 128;
+const screen_height = 768;
 const grid_width = 10; // 10 block_widths across
 const grid_height = 20; // 20 block_widths down
 const boundary_width = (grid_width * block_width);
@@ -80,7 +80,7 @@ const State = struct {
 
     // Hit spacebar and this commits to placing it
     tet_commit_place: bool = false,
-    tet_commit_place_speed: u32 = 600,
+    tet_commit_place_speed: u32 = 2000,
     tet_commit_place_max_speed_ms: u32 = 2000,
     tet_commit_place_timer: u32 = 0,
 
@@ -89,7 +89,7 @@ const State = struct {
     tet_place_max_time_ms: u32 = 600,
 
     // Speed for dropping tetromino
-    tet_drop_speed: u32 = 1,
+    tet_drop_speed: u32 = 32,
     tet_drop_max_speed_ms: u32 = 2000,
     tet_drop_timer: u32 = 0,
 
@@ -102,19 +102,17 @@ const State = struct {
         try std.os.getrandom(std.mem.asBytes(&seed));
         rnd = rand.init(seed);
 
-        // TODO(AW): Free allocated memory
-//        self.blocks.deinit();
         self.blocks = std.ArrayList(Block).init(allocator);
 
         self.tet_commit_place = false;
-        self.tet_commit_place_speed = 1000;
+        self.tet_commit_place_speed = 2000;
         self.tet_commit_place_max_speed_ms = 2000;
         self.tet_commit_place_timer = 0;
 
         self.tet_place_timer = 0;
         self.tet_place_max_time_ms = 1000;
 
-        self.tet_drop_speed = 5;
+        self.tet_drop_speed = 14;
         self.tet_drop_max_speed_ms = 1000;
         self.tet_drop_timer = 0;
 
@@ -129,8 +127,6 @@ const State = struct {
 
         self.reset_tet();
 
-        print("reset called. shape = {}", .{self.tet_shape});
-
     }
 
     pub fn reset_tet(self: *Self) void {
@@ -141,8 +137,6 @@ const State = struct {
         self.tet_rotation = 0;
 
         self.tet_blocks = self.project_blocks(self.tet, self.tet_rotation);
-
-        print("reset_tet called. shape = {} \n", .{self.tet_shape});
     }
 
     pub fn next_tet(self: *Self) void {
@@ -154,34 +148,28 @@ const State = struct {
         self.up_next[1] = self.up_next[2];
         self.up_next[2] = self.random_shape();
 
-        print("next_tet called. shape = {} \n", .{self.tet_shape});
-
     }
 
-    pub fn process(self: *Self, events: []Event) !void {
+    pub fn process(self: *Self, events: []Event) !usize {
 
-        if (self.failed or self.paused) return;
+        var processed_count: usize  = 0;
+
+        if (self.failed or self.paused) return 0;
 
         for (events) |event| {
+
+            processed_count += 1;
+
             self.time_delta = event.time - self.curr_time;
             self.curr_time = event.time;
 
             var next_down  = .{ .x = self.tet.x,      .y = self.tet.y + 1 };
 
-            if (event.input != Input.NONE) {
-                print("event = {} \n time_delta = {} \n curr_time = {} \n", .{event, self.time_delta, self.curr_time});
-            }
-
             if (self.tet_commit_place) {
 
                 self.tet_commit_place_timer += self.time_delta;
-
-                if (self.tet_commit_place_timer >= (self.tet_commit_place_max_speed_ms / self.tet_commit_place_speed)) {
-
-                    self.tet_commit_place_timer = 0;
-
-                    self.move(next_down, self.tet_rotation);
-                }
+                self.tet_commit_place_timer = 0;
+                self.move(next_down, self.tet_rotation);
 
                 // If it can't move down anymore, we place the tet and add as blocks
                 if (!self.possible_move(next_down, self.tet_rotation)) {
@@ -207,7 +195,6 @@ const State = struct {
                 // every 1 second we drop
                 self.tet_drop_timer = 0;
                 const next = .{ .x = self.tet.x, .y = self.tet.y + 1 };
-                print("drop next = {} \n", .{next});
                 self.move(next, self.tet_rotation);
 
             }
@@ -265,6 +252,13 @@ const State = struct {
                                 break;
                             }
                         }
+
+                        //long boys are special
+                        const double_left_bounce   = .{ .x = self.tet.x - 2,   .y = self.tet.y     };
+                        if (self.tet_shape == 1 and self.possible_move(double_left_bounce, next_rotation)) {
+                            self.move(double_left_bounce, next_rotation);
+                        }
+
                     }
                 },
                 Input.PLACE_TETROMINO => {
@@ -281,7 +275,7 @@ const State = struct {
 
             self.moves_timer += self.time_delta;
 
-            if (self.moves_timer >= 72) {
+            if (self.moves_timer >= 60) {
 
                 self.moves_timer = 0;
 
@@ -307,8 +301,6 @@ const State = struct {
                 const next_left  = .{ .x = self.tet.x - 1,  .y = self.tet.y     };
                 const next_right = .{ .x = self.tet.x + 1,  .y = self.tet.y     };
 
-                // TODO(AW): For ending the game, do a check where if there's an tet_block
-                //           above grid (y < 0) and it can't move down
                 if (self.tet.y == 1 and
                     !self.possible_move(next_down, self.tet_rotation) and
                     !self.possible_move(next_left, self.tet_rotation) and
@@ -319,9 +311,9 @@ const State = struct {
 
             }
 
-
         }
 
+        return processed_count;
     }
 
     pub fn full_row(self: Self, row: i32) bool {
@@ -475,31 +467,20 @@ pub fn main() !void {
     var curr_time = c.SDL_GetTicks();
     var last_tick_event: u32 = 0;
 
-    var frame_count: u32 = 0;
-    var frame_time_count: u32 = 0;
-
     var paused = false;
 
     while (!quit) {
 
-        frame_count += 1;
-
         prev_time = curr_time;
-        curr_time = c.SDL_GetTicks();
 
-        var delta_time = curr_time - prev_time;
-
-        frame_time_count += delta_time;
-        if (frame_time_count >= 1000) {
-            print("fps: {}\n", .{frame_count});
-            frame_count = 0;
-            frame_time_count = 0;
+        {
+            var delta = c.SDL_GetTicks() - prev_time;
+            if (delta < 16) c.SDL_Delay(16 - delta);
         }
 
-        if (delta_time < 16) c.SDL_Delay(16 - delta_time);
+        curr_time = c.SDL_GetTicks();
 
-
-        if (curr_time - last_tick_event >= 16) {
+        {
             last_tick_event = curr_time;
             const event: Event = .{ .input = Input.NONE, .time =  curr_time };
             try events.append(event);
@@ -512,14 +493,11 @@ pub fn main() !void {
                 c.SDL_QUIT => { quit = true; },
                 c.SDL_KEYDOWN => {
 
-                    print("keydown event: {}\n", .{sdl_event.@"key".keysym.sym});
-
                     switch (sdl_event.key.keysym.sym) {
                         112 => { // p
                             state.paused = !state.paused;
                         },
                         114 => { // r
-                            print("Reset current state \n", .{});
 
                             allocator.destroy(state);
                             state = try allocator.create(State);
@@ -531,7 +509,6 @@ pub fn main() !void {
                             try state.reset();
                         },
                         116 => { // t
-                            print("Replay events from beginning. Resetting state \n", .{});
                             try state.reset();
                             index = 0;
                         },
@@ -560,11 +537,9 @@ pub fn main() !void {
                     }
                 },
                 c.SDL_KEYUP => {
-                    print("keyup event: {}\n", .{sdl_event.@"key".keysym.sym});
 
                     const input = sdl_keyup_event_to_input(sdl_event);
                     if (input == Input.NONE) break;
-                    print("game_event = {} \n", .{input});
                     const event: Event = .{ .input = input, .time =  curr_time };
                     try events.append(event);
 
@@ -574,23 +549,21 @@ pub fn main() !void {
         }
 
         if (!paused and index < events.items.len) {
-            try state.process(events.items[index..(index+1)]);
-            index += 1;
+            index += try state.process(events.items[index..]);
         }
 
         const bg_colour = .{
-            .r = 96,
-            .g = 128,
-            .b = 255
+            .r = 0x64,
+            .g = 0x95,
+            .b = 0xff
         };
-
 
         // Render Background
         _ = c.SDL_SetRenderDrawColor(renderer, bg_colour.r, bg_colour.g, bg_colour.b, 255);
         _ = c.SDL_RenderClear(renderer);
 
         const grid_offset_x = 1;
-        const grid_offset_y = 4;
+        const grid_offset_y = 2;
 
         {
             const x = grid_offset_x * block_width;
@@ -742,7 +715,7 @@ const shape_colours = [_]Colour{
 
   .{ .r = 0xff, .g = 0xc0, .b = 0xcb }, // pink
   .{ .r = 0xad, .g = 0xd8, .b = 0xe6 }, // light blue
-  .{ .r = 0x00, .g = 0x00, .b = 0x8b }, // dark blue
+  .{ .r = 0xd7, .g = 0xbf, .b = 0xdc }, // purple
   .{ .r = 0xff, .g = 0xd5, .b = 0x80 }, // light orange
   .{ .r = 0xfa, .g = 0x80, .b = 0x72 }, // red
   .{ .r = 0x90, .g = 0xee, .b = 0x90 }, // light green
