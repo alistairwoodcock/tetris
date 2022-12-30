@@ -7,6 +7,7 @@ const c = @cImport({
 const std = @import("std");
 const print = std.debug.print;
 const expect = std.testing.expect;
+const rand = std.rand.DefaultPrng;
 
 const Position = struct {
     x: i32,
@@ -17,6 +18,11 @@ const Colour = struct {
     r: u8,
     g: u8,
     b: u8,
+};
+
+const Block = struct {
+    position: Position,
+    colour: Colour,
 };
 
 const Input = enum {
@@ -43,18 +49,23 @@ const boundary_height = (grid_height * block_width);
 
 const allocator: std.mem.Allocator = std.heap.page_allocator;
 
+var rnd = rand.init(0);
+
+
 const State = struct {
     const Self = @This();
 
     time_delta: u32,
     curr_time: u32,
 
-    blocks: std.ArrayList(Position),
+    blocks: std.ArrayList(Block),
+
+    up_next: [3]u8,
 
     tet: Position,
     tet_shape: u8 = 0,
     tet_rotation: u8 = 0,
-    tet_blocks: [4]Position,
+    tet_blocks: [4]Block,
 
     // Hit spacebar and this commits to placing it
     tet_commit_place: bool = false,
@@ -73,8 +84,10 @@ const State = struct {
 
     pub fn reset(self: *Self) !void {
 
+        rnd = rand.init(0);
+
         // TODO(AW): Free allocated memory
-        self.blocks = std.ArrayList(Position).init(allocator);
+        self.blocks = std.ArrayList(Block).init(allocator);
 
         self.tet_commit_place = false;
         self.tet_commit_place_speed = 1000;
@@ -91,6 +104,12 @@ const State = struct {
         self.time_delta = 0;
         self.curr_time = 0;
 
+        self.up_next = [3]u8{
+            self.random_shape(),
+            self.random_shape(),
+            self.random_shape()
+        };
+
         self.reset_tet();
 
     }
@@ -98,11 +117,22 @@ const State = struct {
     pub fn reset_tet(self: *Self) void {
 
         self.tet.x = grid_width/2 - 1;
-        self.tet.y = 0;
-        self.tet_shape = 0;
+        self.tet.y = 1;
+        self.tet_shape = self.random_shape();
         self.tet_rotation = 0;
 
         self.tet_blocks = self.project_blocks(self.tet, self.tet_rotation);
+    }
+
+    pub fn next_tet(self: *Self) void {
+
+        self.reset_tet();
+
+        self.tet_shape = self.up_next[0];
+        self.up_next[0] = self.up_next[1];
+        self.up_next[1] = self.up_next[2];
+        self.up_next[2] = self.random_shape();
+
     }
 
     pub fn process(self: *Self, events: []Event) !void {
@@ -110,6 +140,9 @@ const State = struct {
         for (events) |event| {
             self.time_delta = event.time - self.curr_time;
             self.curr_time = event.time;
+
+            // TODO(AW): For ending the game, do a check where if there's an tet_block
+            //           above grid (y < 0) and it can't move down
 
             const next_down = .{ .x = self.tet.x, .y = self.tet.y + 1 };
 
@@ -163,12 +196,12 @@ const State = struct {
                     for (self.blocks.items) |_| {
                         var block = self.blocks.orderedRemove(0);
                         // Reinsert if not on this current row
-                        if (block.y != grid_y) try self.blocks.append(block);
+                        if (block.position.y != grid_y) try self.blocks.append(block);
                     }
                 } else {
                     for (self.blocks.items) |block, index| {
-                        if (block.y != grid_y) continue;
-                        self.blocks.items[index].y += down_movement;
+                        if (block.position.y != grid_y) continue;
+                        self.blocks.items[index].position.y += down_movement;
                     }
                 }
             }
@@ -245,7 +278,7 @@ const State = struct {
 
     pub fn block_exists_at_position(self: Self, pos: Position) bool {
         for (self.blocks.items) |block| {
-            if (block.x != pos.x or block.y != pos.y) continue;
+            if (block.position.x != pos.x or block.position.y != pos.y) continue;
             return true;
         }
         return false;
@@ -260,13 +293,13 @@ const State = struct {
         const next_blocks = self.project_blocks(next, rotation);
 
         for (next_blocks) |next_block| {
-            if (next_block.x < 0) return false;
-            if (next_block.x > grid_width - 1) return false;
-            if (next_block.y < 0) return false;
-            if (next_block.y > grid_height - 1) return false;
+            if (next_block.position.x < 0) return false;
+            if (next_block.position.x > grid_width - 1) return false;
+            if (next_block.position.y > grid_height - 1) return false;
 
             for (self.blocks.items) |block| {
-                if (next_block.x == block.x and next_block.y == block.y) return false;
+                if (next_block.position.x == block.position.x and
+                    next_block.position.y == block.position.y) return false;
             }
         }
 
@@ -280,16 +313,38 @@ const State = struct {
         self.tet_blocks = self.project_blocks(next, rotation);
     }
 
-    pub fn project_blocks(self: Self, pos: Position, rotation: u8) [4]Position {
+    pub fn project_blocks(self: Self, pos: Position, rotation: u8) [4]Block {
+        return State.project_generic_blocks(self.tet_shape, pos, rotation);
+    }
 
-        const rotations = shape_rotations[self.tet_shape][rotation];
-
-        return [4]Position{
-            .{ .x = pos.x + rotations[0].x, .y = pos.y + rotations[0].y },
-            .{ .x = pos.x + rotations[1].x, .y = pos.y + rotations[1].y },
-            .{ .x = pos.x + rotations[2].x, .y = pos.y + rotations[2].y },
-            .{ .x = pos.x + rotations[3].x, .y = pos.y + rotations[3].y }
+    pub fn project_generic_blocks(shape: u8, pos: Position, rotation: u8) [4]Block {
+        const rotations = shape_rotations[shape][rotation];
+        return [4]Block{
+            .{
+                .position = .{ .x = pos.x + rotations[0].x, .y = pos.y + rotations[0].y },
+                .colour = shape_colours[shape],
+            },
+            .{
+                .position = .{ .x = pos.x + rotations[1].x, .y = pos.y + rotations[1].y },
+                .colour = shape_colours[shape],
+            },
+            .{
+                .position = .{ .x = pos.x + rotations[2].x, .y = pos.y + rotations[2].y },
+                .colour = shape_colours[shape],
+            },
+            .{
+                .position = .{ .x = pos.x + rotations[3].x, .y = pos.y + rotations[3].y },
+                .colour = shape_colours[shape],
+            }
         };
+    }
+
+    pub fn random_shape(_: Self) u8 {
+        return rnd.random().int(u8) % @as(u8, shape_rotations.len);
+    }
+
+    pub fn random_colour(_: Self) u8 {
+        return rnd.random().int(u8) % @as(u8, shape_colours.len);
     }
 
     pub fn place_tet(self: *Self) !void {
@@ -299,7 +354,7 @@ const State = struct {
             try self.blocks.append(block);
         }
 
-        self.reset_tet();
+        self.next_tet();
 
         // Place disabled
         self.tet_commit_place = false;
@@ -399,8 +454,15 @@ pub fn main() !void {
             index += 1;
         }
 
+        const bg_colour = .{
+            .r = 96,
+            .g = 128,
+            .b = 255
+        };
+
+
         // Render Background
-        _ = c.SDL_SetRenderDrawColor(renderer, 96, 128, 255, 255);
+        _ = c.SDL_SetRenderDrawColor(renderer, bg_colour.r, bg_colour.g, bg_colour.b, 255);
         _ = c.SDL_RenderClear(renderer);
 
         const grid_offset_x = 1;
@@ -415,7 +477,7 @@ pub fn main() !void {
             _ = c.SDL_RenderFillRect(renderer, &rect);
         }
 
-        _ = c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND);
+//        _ = c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND);
 
         // Tetromino Blocks
         {
@@ -428,14 +490,14 @@ pub fn main() !void {
                 x = grid_offset_x;
                 y = grid_offset_y;
 
-                x += block.x;
-                y += block.y;
+                x += block.position.x;
+                y += block.position.y;
 
                 x *= block_width;
                 y *= block_width;
 
                 const brect = c.SDL_Rect{ .x = x, .y = y, .w = block_width, .h = block_width };
-                _ = c.SDL_SetRenderDrawColor(renderer, 0x11, 0xff, 0x11, 0xff);
+                _ = c.SDL_SetRenderDrawColor(renderer, block.colour.r, block.colour.g, block.colour.b, 0xff);
                 _ = c.SDL_RenderFillRect(renderer, &brect);
             }
 
@@ -462,17 +524,67 @@ pub fn main() !void {
                 var x: c_int = grid_offset_x;
                 var y: c_int = grid_offset_y;
 
-                x += block.x;
-                y += block.y;
+                x += block.position.x;
+                y += block.position.y;
 
                 x *= block_width;
                 y *= block_width;
 
                 const rect = c.SDL_Rect{ .x = x, .y = y, .w = block_width, .h = block_width };
-                _ = c.SDL_SetRenderDrawColor(renderer, 0xee, 0x11, 0x11, 0x10);
+                _ = c.SDL_SetRenderDrawColor(renderer, block.colour.r, block.colour.g, block.colour.b, 0x10);
                 _ = c.SDL_RenderFillRect(renderer, &rect);
             }
 
+        }
+
+        // Render box above starting position to hide tet above grid
+        {
+
+            const x = grid_offset_x * block_width;
+            const y = (grid_offset_y - 4) * block_width;
+
+            const rect = c.SDL_Rect{ .x = x, .y = y, .w = boundary_width, .h = 4 * block_width };
+            _ = c.SDL_SetRenderDrawColor(renderer, bg_colour.r, bg_colour.g, bg_colour.b, 255);
+            _ = c.SDL_RenderFillRect(renderer, &rect);
+
+        }
+
+        // Render up next box
+
+        {
+
+            const x = (grid_offset_x + grid_width + 2);
+            const y = grid_offset_y;
+
+            const rect = c.SDL_Rect{ .x = x * block_width, .y = y * block_width, .w = block_width * 5, .h = block_width * 13 - 15 };
+            _ = c.SDL_SetRenderDrawColor(renderer, 0xef, 0xef, 0xef, 0xff);
+            _ = c.SDL_RenderFillRect(renderer, &rect);
+
+            const positions = [_]Position{
+                .{ .x = x + 2, .y = y + 2 },
+                .{ .x = x + 2, .y = y + 6 },
+                .{ .x = x + 2, .y = y + 10 },
+            };
+
+            for (state.up_next) |shape, i| {
+                const blocks = State.project_generic_blocks(shape, positions[i], 0);
+
+                for (blocks) |block| {
+
+                    var brect = c.SDL_Rect{
+                        .x = block.position.x * block_width,
+                        .y = block.position.y * block_width - 15,
+                        .w = block_width,
+                        .h = block_width
+                    };
+
+                    if (shape == 1) brect.x -= 15;
+
+                    _ = c.SDL_SetRenderDrawColor(renderer, block.colour.r, block.colour.g, block.colour.b, 0x10);
+                    _ = c.SDL_RenderFillRect(renderer, &brect);
+
+                }
+            }
         }
 
         // Finish Render
@@ -491,6 +603,16 @@ pub fn sdl_event_to_input(sdl_event: c.SDL_Event) Input {
     }
     return Input.NONE;
 }
+
+const shape_colours = [_]Colour{
+
+  .{ .r = 0xff, .g = 0xc0, .b = 0xcb }, // pink
+  .{ .r = 0xad, .g = 0xd8, .b = 0xe6 }, // light blue
+  .{ .r = 0x00, .g = 0x00, .b = 0x8b }, // dark blue
+//  .{ .r = 0, .g = 0, .b = 0 },
+//  .{ .r = 0, .g = 0, .b = 0 },
+
+};
 
 const shape_rotations = [_][4][4]Position{
 
@@ -518,12 +640,6 @@ const shape_rotations = [_][4][4]Position{
 
     [4][4]Position {
 
-        //  []
-        //  []
-        //  []
-        //  []
-        [_]Position{ .{ .x = 0, .y = -1 }, .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 1 }, .{ .x = 0, .y = 2 } },
-
         //
         //[][][][]
         //
@@ -539,6 +655,12 @@ const shape_rotations = [_][4][4]Position{
         //[][][][]
         //
         [_]Position{ .{ .x = -1, .y = 0 }, .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = 2, .y = 0 } },
+
+        //  []
+        //  []
+        //  []
+        //  []
+        [_]Position{ .{ .x = 0, .y = -1 }, .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 1 }, .{ .x = 0, .y = 2 } },
 
     },
 
