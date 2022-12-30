@@ -112,16 +112,20 @@ const State = struct {
 
         self.reset_tet();
 
+        print("reset called. shape = {}", .{self.tet_shape});
+
     }
 
     pub fn reset_tet(self: *Self) void {
 
         self.tet.x = grid_width/2 - 1;
         self.tet.y = 1;
-        self.tet_shape = self.random_shape();
+        self.tet_shape = self.up_next[0];
         self.tet_rotation = 0;
 
         self.tet_blocks = self.project_blocks(self.tet, self.tet_rotation);
+
+        print("reset_tet called. shape = {} \n", .{self.tet_shape});
     }
 
     pub fn next_tet(self: *Self) void {
@@ -132,6 +136,8 @@ const State = struct {
         self.up_next[0] = self.up_next[1];
         self.up_next[1] = self.up_next[2];
         self.up_next[2] = self.random_shape();
+
+        print("next_tet called. shape = {} \n", .{self.tet_shape});
 
     }
 
@@ -146,7 +152,9 @@ const State = struct {
 
             const next_down = .{ .x = self.tet.x, .y = self.tet.y + 1 };
 
-            // print("event = {} \n time_delta = {} \n curr_time = {} \n", .{event, self.time_delta, self.curr_time});
+            if (event.input != Input.NONE) {
+                print("event = {} \n time_delta = {} \n curr_time = {} \n", .{event, self.time_delta, self.curr_time});
+            }
 
             if (self.tet_commit_place) {
 
@@ -406,7 +414,7 @@ pub fn main() !void {
 
         if (curr_time - last_tick_event > 15) {
             last_tick_event = curr_time;
-//            print("append event {}    events.length = {}\n", .{curr_time, events.items.len});
+            print("append event {}    events.length = {}\n", .{curr_time, events.items.len});
             const event: Event = .{ .input = Input.NONE, .time =  curr_time };
             try events.append(event);
         }
