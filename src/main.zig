@@ -28,8 +28,11 @@ const Block = struct {
 const Input = enum {
     NONE,
     MOVE_LEFT,
+    STOP_MOVE_LEFT,
     MOVE_RIGHT,
+    STOP_MOVE_RIGHT,
     MOVE_DOWN,
+    STOP_MOVE_DOWN,
     ROTATE,
     PLACE_TETROMINO,
 };
@@ -66,6 +69,11 @@ const State = struct {
     tet_shape: u8 = 0,
     tet_rotation: u8 = 0,
     tet_blocks: [4]Block,
+
+    move_left: bool = false,
+    move_right: bool = false,
+    move_down: bool = false,
+    moves_timer: u32 = 0,
 
     // Hit spacebar and this commits to placing it
     tet_commit_place: bool = false,
@@ -196,6 +204,7 @@ const State = struct {
 
             }
 
+            // TODO(AW): Move this to only run after place_tet has been called
             var down_movement: i32 = 0;
             var grid_y: i32 = grid_height;
             while (grid_y > 0): (grid_y -= 1) {
@@ -217,18 +226,27 @@ const State = struct {
             switch (event.input) {
                 Input.MOVE_LEFT => {
                     if (self.ignore_input()) break;
-                    const next = .{ .x = self.tet.x - 1, .y = self.tet.y };
-                    self.move(next, self.tet_rotation);
+                    self.move_left = true;
+                },
+                Input.STOP_MOVE_LEFT => {
+                    if (self.ignore_input()) break;
+                    self.move_left = false;
                 },
                 Input.MOVE_RIGHT => {
                     if (self.ignore_input()) break;
-                    const next = .{ .x = self.tet.x + 1, .y = self.tet.y };
-                    self.move(next, self.tet_rotation);
+                    self.move_right = true;
+                },
+                Input.STOP_MOVE_RIGHT => {
+                    if (self.ignore_input()) break;
+                    self.move_right = false;
                 },
                 Input.MOVE_DOWN => {
                     if (self.ignore_input()) break;
-                    const next = .{ .x = self.tet.x, .y = self.tet.y + 1 };
-                    self.move(next, self.tet_rotation);
+                    self.move_down = true;
+                },
+                Input.STOP_MOVE_DOWN => {
+                    if (self.ignore_input()) break;
+                    self.move_down = false;
                 },
                 Input.ROTATE => {
                     if (self.ignore_input()) break;
@@ -261,7 +279,8 @@ const State = struct {
                 },
                 Input.PLACE_TETROMINO => {
                     if (self.ignore_input()) break;
-
+                    self.move_left = false;
+                    self.move_right = false;
                     self.tet_commit_place = true;
 
                 },
@@ -269,6 +288,30 @@ const State = struct {
 
                 }
             }
+
+            self.moves_timer += self.time_delta;
+
+            if (self.moves_timer >= 32) {
+
+                self.moves_timer = 0;
+
+                if (self.move_left) {
+                    const next = .{ .x = self.tet.x - 1, .y = self.tet.y };
+                    self.move(next, self.tet_rotation);
+                }
+
+                if (self.move_right) {
+                    const next = .{ .x = self.tet.x + 1, .y = self.tet.y };
+                    self.move(next, self.tet_rotation);
+                }
+
+                if (self.move_down) {
+                    const next = .{ .x = self.tet.x, .y = self.tet.y + 1 };
+                    self.move(next, self.tet_rotation);
+                }
+
+            }
+
 
         }
 
@@ -407,14 +450,30 @@ pub fn main() !void {
     var curr_time = c.SDL_GetTicks();
     var last_tick_event: u32 = 0;
 
+    var frame_count: u32 = 0;
+    var frame_time_count: u32 = 0;
+
     while (!quit) {
+
+        frame_count += 1;
 
         prev_time = curr_time;
         curr_time = c.SDL_GetTicks();
 
-        if (curr_time - last_tick_event > 15) {
+        var delta_time = curr_time - prev_time;
+
+        frame_time_count += delta_time;
+        if (frame_time_count >= 1000) {
+            print("fps: {}\n", .{frame_count});
+            frame_count = 0;
+            frame_time_count = 0;
+        }
+
+        if (delta_time < 16) c.SDL_Delay(16 - delta_time);
+
+
+        if (curr_time - last_tick_event >= 16) {
             last_tick_event = curr_time;
-            print("append event {}    events.length = {}\n", .{curr_time, events.items.len});
             const event: Event = .{ .input = Input.NONE, .time =  curr_time };
             try events.append(event);
         }
@@ -425,6 +484,8 @@ pub fn main() !void {
             switch (sdl_event.@"type") {
                 c.SDL_QUIT => { quit = true; },
                 c.SDL_KEYDOWN => {
+
+                    print("keydown event: {}\n", .{sdl_event.@"key".keysym.sym});
 
                     switch (sdl_event.key.keysym.sym) {
                         114 => { // r
@@ -441,18 +502,26 @@ pub fn main() !void {
                         },
                         else => {
 
-                            const input = sdl_event_to_input(sdl_event);
+                            const input = sdl_keydown_event_to_input(sdl_event);
                             if (input == Input.NONE) break;
+
                             print("game_event = {} \n", .{input});
-
                             const event: Event = .{ .input = input, .time =  curr_time };
-
                             try events.append(event);
 
                         }
                     }
                 },
-                c.SDL_KEYUP => { print("keyup event: {}\n", .{sdl_event.@"key".keysym.sym}); },
+                c.SDL_KEYUP => {
+                    print("keyup event: {}\n", .{sdl_event.@"key".keysym.sym});
+
+                    const input = sdl_keyup_event_to_input(sdl_event);
+                    if (input == Input.NONE) break;
+                    print("game_event = {} \n", .{input});
+                    const event: Event = .{ .input = input, .time =  curr_time };
+                    try events.append(event);
+
+                },
                 else => {},
             }
         }
@@ -485,8 +554,6 @@ pub fn main() !void {
             _ = c.SDL_RenderFillRect(renderer, &rect);
         }
 
-//        _ = c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND);
-
         // Tetromino Blocks
         {
             // Offsets of the grid for rendering
@@ -508,20 +575,6 @@ pub fn main() !void {
                 _ = c.SDL_SetRenderDrawColor(renderer, block.colour.r, block.colour.g, block.colour.b, 0xff);
                 _ = c.SDL_RenderFillRect(renderer, &brect);
             }
-
-            x = grid_offset_x;
-            y = grid_offset_y;
-
-            x += state.tet.x;
-            y += state.tet.y;
-
-            x *= block_width;
-            y *= block_width;
-
-            const rect = c.SDL_Rect{ .x = x, .y = y, .w = block_width, .h = block_width };
-            _ = c.SDL_SetRenderDrawColor(renderer, 0xcc, 0xff, 0xff, 0xff);
-            _ = c.SDL_RenderFillRect(renderer, &rect);
-
 
         }
 
@@ -600,7 +653,7 @@ pub fn main() !void {
     }
 }
 
-pub fn sdl_event_to_input(sdl_event: c.SDL_Event) Input {
+pub fn sdl_keydown_event_to_input(sdl_event: c.SDL_Event) Input {
     switch (sdl_event.key.keysym.sym) {
         c.SDLK_LEFT => { return Input.MOVE_LEFT; },
         c.SDLK_RIGHT => { return Input.MOVE_RIGHT; },
@@ -612,13 +665,25 @@ pub fn sdl_event_to_input(sdl_event: c.SDL_Event) Input {
     return Input.NONE;
 }
 
+pub fn sdl_keyup_event_to_input(sdl_event: c.SDL_Event) Input {
+    switch (sdl_event.key.keysym.sym) {
+        c.SDLK_LEFT => { return Input.STOP_MOVE_LEFT; },
+        c.SDLK_RIGHT => { return Input.STOP_MOVE_RIGHT; },
+        c.SDLK_DOWN => { return Input.STOP_MOVE_DOWN; },
+        else => {},
+    }
+    return Input.NONE;
+}
+
 const shape_colours = [_]Colour{
 
   .{ .r = 0xff, .g = 0xc0, .b = 0xcb }, // pink
   .{ .r = 0xad, .g = 0xd8, .b = 0xe6 }, // light blue
   .{ .r = 0x00, .g = 0x00, .b = 0x8b }, // dark blue
-//  .{ .r = 0, .g = 0, .b = 0 },
-//  .{ .r = 0, .g = 0, .b = 0 },
+  .{ .r = 0xff, .g = 0xd5, .b = 0x80 }, // light orange
+  .{ .r = 0xfa, .g = 0x80, .b = 0x72 }, // red
+  .{ .r = 0x90, .g = 0xee, .b = 0x90 }, // light green
+  .{ .r = 0xff, .g = 0xf4, .b = 0x4f }, // yellow
 
 };
 
@@ -693,6 +758,102 @@ const shape_rotations = [_][4][4]Position{
         //  []
         //[][]
         [_]Position{ .{ .x = 0, .y = -1 }, .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 1 }, .{ .x = -1, .y = 1 } },
+
+    },
+
+    [4][4]Position {
+
+        //    []
+        //[][][]
+        //
+        [_]Position{ .{ .x = 1, .y = -1 }, .{ .x = -1, .y = 0 }, .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 } },
+
+        //[][]
+        //  []
+        //  []
+        [_]Position{ .{ .x = -1, .y = -1 }, .{ .x = 0, .y = -1 }, .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 1 } },
+
+        //
+        //[][][]
+        //[]
+        [_]Position{ .{ .x = -1, .y = 0 }, .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = -1, .y = 1 } },
+
+        //  []
+        //  []
+        //  [][]
+        [_]Position{ .{ .x = 0, .y = -1 }, .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 1 }, .{ .x = 1, .y = 1 } },
+
+    },
+
+    [4][4]Position {
+
+        //[][]
+        //  [][]
+        //
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = 0, .y = -1 }, .{ .x = -1, .y = -1 } },
+
+        //  []
+        //[][]
+        //[]
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = 0, .y = -1 }, .{ .x = -1, .y = 0 }, .{ .x = -1, .y = 1 } },
+
+        //
+        //[][]
+        //  [][]
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = -1, .y = 0 }, .{ .x = 0, .y = 1 }, .{ .x = 1, .y = 1 } },
+
+        //    []
+        //  [][]
+        //  []
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = 1, .y = -1 }, .{ .x = 0, .y = 1 } },
+
+    },
+
+    [4][4]Position {
+
+        //  [][]
+        //[][]
+        //
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = -1, .y = 0 }, .{ .x = 0, .y = -1 }, .{ .x = 1, .y = -1 } },
+
+        //  []
+        //  [][]
+        //    []
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = 0, .y = -1 }, .{ .x = 1, .y = 0 }, .{ .x = 1, .y = 1 } },
+
+        //
+        //  [][]
+        //[][]
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = 0, .y = 1 }, .{ .x = -1, .y = 1 } },
+
+        //[]
+        //[][]
+        //  []
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = -1, .y = 0 }, .{ .x = -1, .y = -1 }, .{ .x = 0, .y = 1 } },
+
+    },
+
+    [4][4]Position {
+
+        //  [][]
+        //  [][]
+        //
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = 0, .y = -1 }, .{ .x = 1, .y = -1 } },
+
+        //  [][]
+        //  [][]
+        //
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = 0, .y = -1 }, .{ .x = 1, .y = -1 } },
+
+        //  [][]
+        //  [][]
+        //
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = 0, .y = -1 }, .{ .x = 1, .y = -1 } },
+
+        //  [][]
+        //  [][]
+        //
+        [_]Position{ .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = 0, .y = -1 }, .{ .x = 1, .y = -1 } }
 
     }
 };
