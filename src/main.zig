@@ -83,7 +83,7 @@ const State = struct {
 
     // Timer for turning the tet into block if no movement
     tet_place_timer: u32 = 0,
-    tet_place_max_time_ms: u32 = 1000,
+    tet_place_max_time_ms: u32 = 600,
 
     // Speed for dropping tetromino
     tet_drop_speed: u32 = 1,
@@ -105,7 +105,7 @@ const State = struct {
         self.tet_place_timer = 0;
         self.tet_place_max_time_ms = 1000;
 
-        self.tet_drop_speed = 1;
+        self.tet_drop_speed = 5;
         self.tet_drop_max_speed_ms = 1000;
         self.tet_drop_timer = 0;
 
@@ -204,24 +204,6 @@ const State = struct {
 
             }
 
-            // TODO(AW): Move this to only run after place_tet has been called
-            var down_movement: i32 = 0;
-            var grid_y: i32 = grid_height;
-            while (grid_y > 0): (grid_y -= 1) {
-                if (self.full_row(grid_y)) {
-                    down_movement += 1;
-                    for (self.blocks.items) |_| {
-                        var block = self.blocks.orderedRemove(0);
-                        // Reinsert if not on this current row
-                        if (block.position.y != grid_y) try self.blocks.append(block);
-                    }
-                } else {
-                    for (self.blocks.items) |block, index| {
-                        if (block.position.y != grid_y) continue;
-                        self.blocks.items[index].position.y += down_movement;
-                    }
-                }
-            }
 
             switch (event.input) {
                 Input.MOVE_LEFT => {
@@ -291,7 +273,7 @@ const State = struct {
 
             self.moves_timer += self.time_delta;
 
-            if (self.moves_timer >= 32) {
+            if (self.moves_timer >= 72) {
 
                 self.moves_timer = 0;
 
@@ -405,10 +387,28 @@ const State = struct {
             try self.blocks.append(block);
         }
 
-        self.next_tet();
+        var down_movement: i32 = 0;
+        var grid_y: i32 = grid_height;
+        while (grid_y > 0): (grid_y -= 1) {
+            if (self.full_row(grid_y)) {
+                down_movement += 1;
+                for (self.blocks.items) |_| {
+                    var block = self.blocks.orderedRemove(0);
+                    // Reinsert if not on this current row
+                    if (block.position.y != grid_y) try self.blocks.append(block);
+                }
+            } else {
+                for (self.blocks.items) |block, index| {
+                    if (block.position.y != grid_y) continue;
+                    self.blocks.items[index].position.y += down_movement;
+                }
+            }
+        }
 
         // Place disabled
         self.tet_commit_place = false;
+
+        self.next_tet();
 
     }
 
@@ -453,6 +453,8 @@ pub fn main() !void {
     var frame_count: u32 = 0;
     var frame_time_count: u32 = 0;
 
+    var paused = false;
+
     while (!quit) {
 
         frame_count += 1;
@@ -488,6 +490,9 @@ pub fn main() !void {
                     print("keydown event: {}\n", .{sdl_event.@"key".keysym.sym});
 
                     switch (sdl_event.key.keysym.sym) {
+                        112 => { // p
+                            paused = !paused;
+                        },
                         114 => { // r
                             print("Replay events from beginning. Resetting state \n", .{});
                             try state.reset();
@@ -495,8 +500,13 @@ pub fn main() !void {
                         },
                         116 => { // t
                             print("Reset current state \n", .{});
+
+                            allocator.destroy(state);
+                            state = try allocator.create(State);
+
                             events.deinit();
                             events = std.ArrayList(Event).init(allocator);
+
                             index = 0;
                             try state.reset();
                         },
@@ -526,7 +536,7 @@ pub fn main() !void {
             }
         }
 
-        if (index < events.items.len) {
+        if (!paused and index < events.items.len) {
             try state.process(events.items[index..(index+1)]);
             index += 1;
         }
@@ -648,6 +658,22 @@ pub fn main() !void {
             }
         }
 
+        // pause overlay
+        {
+            if (paused) {
+
+                _ = c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND);
+
+                const rect = c.SDL_Rect{ .x = 0, .y = 0, .w = screen_width, .h = screen_height };
+                _ = c.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0x55);
+                _ = c.SDL_RenderFillRect(renderer, &rect);
+
+                _ = c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_NONE);
+
+            }
+
+        }
+
         // Finish Render
         c.SDL_RenderPresent(renderer);
     }
@@ -683,7 +709,7 @@ const shape_colours = [_]Colour{
   .{ .r = 0xff, .g = 0xd5, .b = 0x80 }, // light orange
   .{ .r = 0xfa, .g = 0x80, .b = 0x72 }, // red
   .{ .r = 0x90, .g = 0xee, .b = 0x90 }, // light green
-  .{ .r = 0xff, .g = 0xf4, .b = 0x4f }, // yellow
+  .{ .r = 0xf5, .g = 0xe0, .b = 0x50 }, // yellow
 
 };
 
@@ -768,20 +794,20 @@ const shape_rotations = [_][4][4]Position{
         //
         [_]Position{ .{ .x = 1, .y = -1 }, .{ .x = -1, .y = 0 }, .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 } },
 
-        //[][]
         //  []
         //  []
-        [_]Position{ .{ .x = -1, .y = -1 }, .{ .x = 0, .y = -1 }, .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 1 } },
+        //  [][]
+        [_]Position{ .{ .x = 0, .y = -1 }, .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 1 }, .{ .x = 1, .y = 1 } },
 
         //
         //[][][]
         //[]
         [_]Position{ .{ .x = -1, .y = 0 }, .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = -1, .y = 1 } },
 
+        //[][]
         //  []
         //  []
-        //  [][]
-        [_]Position{ .{ .x = 0, .y = -1 }, .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 1 }, .{ .x = 1, .y = 1 } },
+        [_]Position{ .{ .x = -1, .y = -1 }, .{ .x = 0, .y = -1 }, .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 1 } },
 
     },
 
