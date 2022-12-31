@@ -11,17 +11,6 @@ pub fn build(b: *Builder) void {
     //     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     //     const mode = b.standardReleaseOptions();
 
-    //     const exe = b.addExecutable("esching", "src/main.zig");
-    //     exe.setTarget(target);
-    //     exe.setBuildMode(mode);
-    //     exe.install();
-
-    //     const run_cmd = exe.run();
-    //     run_cmd.step.dependOn(b.getInstallStep());
-
-    //     const run_step = b.step("run", "Run the app");
-    //     run_step.dependOn(&run_cmd.step);
-
     const mode = b.standardReleaseOptions();
     const exe = b.addExecutable("tetris", "src/main.zig");
     exe.setBuildMode(mode);
