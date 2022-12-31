@@ -1,3 +1,6 @@
 zig-out/
 zig-cache/
 .idea
+mac/
+
+.DS_Store
